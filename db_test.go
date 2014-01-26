@@ -1,9 +1,7 @@
 package dbutil
 
 import (
-	"database/sql"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"os"
 	"testing"
@@ -11,7 +9,7 @@ import (
 )
 
 var (
-	test_db   *sql.DB
+	test_db   DBU
 	test_file = "test.db"
 )
 
@@ -30,7 +28,7 @@ func init() {
 }
 
 func TestSqliteCreate(t *testing.T) {
-	test_db, err := sql.Open("sqlite3", test_file)
+	test_db, err := dbOpen(test_file)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,8 +64,8 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ = sql.Open("sqlite3", test_file)
-	cnt, err := dbUpdate(test_db, "delete from foo where id=?", 13)
+	test_db, _ = dbOpen(test_file)
+	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		fmt.Println("DELETE ERROR: ", err)
 	}
@@ -75,7 +73,7 @@ func TestSqliteDelete(t *testing.T) {
 }
 
 func TestSqliteInsert(t *testing.T) {
-	cnt, err := dbUpdate(test_db, "insert into foo (id,name) values(?,?)", 13, "bakers")
+	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		fmt.Println("INSERT ERROR: ", err)
 	}
@@ -83,7 +81,7 @@ func TestSqliteInsert(t *testing.T) {
 }
 
 func TestSqliteUpdate(t *testing.T) {
-	cnt, err := dbUpdate(test_db, "update foo set id=23 where id > ? and name like ?", "3", "bi%")
+	cnt, err := test_db.Update("update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
 		fmt.Println("UPDATE ERROR: ", err)
 	}
@@ -93,18 +91,18 @@ func TestSqliteUpdate(t *testing.T) {
 func TestSqliteType(t *testing.T) {
 	var cnt int
 	cnt = -2
-	dbGetType(test_db, "select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
+	test_db.GetType("select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
 	fmt.Println("COUNT: ", cnt)
 }
 
 func TestSqliteString(t *testing.T) {
 	var name string
-	dbGetType(test_db, "select name from foo where id > ? and name like ?", &name, "3", "bi%")
+	test_db.GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
 	fmt.Println("NAME: ", name)
 }
 
 func TestSqliteTable(t *testing.T) {
-	table, _ := dbTable(test_db, "select id, name from foo where id > ? and name like ?", "3", "b%")
+	table, _ := test_db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
 	table.Dumper(os.Stdout, true)
 }
 
@@ -124,16 +122,16 @@ func TestSqliteObj(t *testing.T) {
 	}
 
     query := "insert into structs (name,kind,data) values(?,?,?)"
-	_, err = dbUpdate(test_db, query, "bob", 23, "bakers")
+	_, err = test_db.Update(query, "bob", 23, "bakers")
 	if err != nil {
 		fmt.Println("INSERT ERROR: ", err)
     }
-	_, err = dbUpdate(test_db, query, "betty", 23, "bowers")
+	_, err = test_db.Update(query, "betty", 23, "bowers")
 	if err != nil {
 		fmt.Println("INSERT ERROR: ", err)
     }
 
-    results := dbLoadMap(test_db, testMap{}, "select * from structs").(testMap)
+    results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
     for k,v := range results {
         fmt.Println("K:",k,"V:",v)
     }
@@ -142,7 +140,7 @@ func TestSqliteObj(t *testing.T) {
 func TestTable(t *testing.T) {
     // TODO: Table chokes on time value
     query := "select id,name,kind from structs"
-    table, err := dbTable(test_db, query)
+    table, err := test_db.Table(query)
 	if err != nil {
 		t.Fatal(err)
 	}

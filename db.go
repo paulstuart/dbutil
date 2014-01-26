@@ -27,8 +27,13 @@ var (
 	readline    = regexp.MustCompile(`(\.read \S+)`)
 )
 
-func dbOpen(file string) (db *sql.DB, err error) {
-	return sql.Open("sqlite3", file)
+type DBU struct {
+    *sql.DB
+}
+
+func dbOpen(file string) (DBU, error) {
+    db, err := sql.Open("sqlite3", file)
+    return DBU{db}, err
 }
 
 // helper to generate sql values placeholders
@@ -40,23 +45,23 @@ func valuePlaceholders(n int) string {
 	return "(" + strings.Join(a, ",") + ")"
 }
 
-func dbInsertObj(db *sql.DB, table string, obj interface{}) (int64, error) {
+func (db DBU) InsertObj(table string, obj interface{}) (int64, error) {
 	a := objFields(obj, true)
 	f := dbFields(obj, true)
 	v := valuePlaceholders(len(a))
 	query := "insert into " + table + " (" + f + ") values " + v
-	return dbInsert(db, query, a...)
+	return db.Insert(query, a...)
 }
 
-func dbUpdateObj(db *sql.DB, obj interface{}) (rec int64, err error) {
+func (db DBU) UpdateObj(obj interface{}) (rec int64, err error) {
 	var query string
 	table, fields, key, id := dbSetFields(obj)
 	if len(key) > 0 {
 		query = fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
-		rec, err = dbUpdate(db, query, id)
+		rec, err = db.Update(query, id)
 	} else {
 		query = fmt.Sprintf("update %s set %s", table, fields)
-		rec, err = dbUpdate(db, query)
+		rec, err = db.Update(query)
 	}
 	if err != nil {
 		fmt.Println("BAD QUERY:", query, "\nID:", id)
@@ -185,7 +190,7 @@ func keyIndex(obj interface{}) int {
 	return 0 // TODO: error handling!
 }
 
-func dbInsertMany(db *sql.DB, sqltext string, args [][]interface{}) (err error) {
+func (db DBU) InsertMany(sqltext string, args [][]interface{}) (err error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return
@@ -207,15 +212,15 @@ func dbInsertMany(db *sql.DB, sqltext string, args [][]interface{}) (err error) 
 	return
 }
 
-func dbUpdate(db *sql.DB, sqltext string, args ...interface{}) (i int64, e error) {
-	return dbRun(db, sqltext, false, args...)
+func (db DBU) Update(sqltext string, args ...interface{}) (i int64, e error) {
+	return db.Run(sqltext, false, args...)
 }
 
-func dbInsert(db *sql.DB, sqltext string, args ...interface{}) (i int64, e error) {
-	return dbRun(db, sqltext, true, args...)
+func (db DBU) Insert(sqltext string, args ...interface{}) (i int64, e error) {
+	return db.Run(sqltext, true, args...)
 }
 
-func dbRun(db *sql.DB, sqltext string, insert bool, args ...interface{}) (i int64, err error) {
+func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, err error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return
@@ -240,16 +245,16 @@ func dbRun(db *sql.DB, sqltext string, insert bool, args ...interface{}) (i int6
 	return
 }
 
-func dbString(db *sql.DB, query string, args ...interface{}) string {
-	s, err := dbGetString(db, query, args...)
+func (db DBU) String(query string, args ...interface{}) string {
+	s, err := db.GetString(query, args...)
 	if err == nil {
 		return s
 	}
 	return err.Error()
 }
 
-func dbPrint(db *sql.DB, query string, args ...interface{}) {
-	s, err := dbGetString(db, query, args...)
+func (db DBU) Print(query string, args ...interface{}) {
+	s, err := db.GetString(query, args...)
 	if err != nil {
 		fmt.Println("ERROR:", err)
 	} else {
@@ -257,36 +262,36 @@ func dbPrint(db *sql.DB, query string, args ...interface{}) {
 	}
 }
 
-func dbGetString(db *sql.DB, query string, args ...interface{}) (reply string, err error) {
-	err = dbGetType(db, query, &reply, args...)
+func (db DBU) GetString(query string, args ...interface{}) (reply string, err error) {
+	err = db.GetType(query, &reply, args...)
 	return
 }
 
-func dbGetInt(db *sql.DB, query string, args ...interface{}) (reply int, err error) {
-	err = dbGetType(db, query, &reply, args...)
+func (db DBU) GetInt(query string, args ...interface{}) (reply int, err error) {
+	err = db.GetType(query, &reply, args...)
 	return
 }
 
-func dbGetType(db *sql.DB, query string, reply interface{}, args ...interface{}) (err error) {
+func (db DBU) GetType(query string, reply interface{}, args ...interface{}) (err error) {
 	row := db.QueryRow(query, args...)
 	err = row.Scan(reply)
 	return
 }
 
-func dbLoad(db *sql.DB, query string, reply *[]interface{}, args ...interface{}) (err error) {
+func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err error) {
 	row := db.QueryRow(query, args...)
 	err = row.Scan(*reply...)
 	return
 }
 
-func dbLoadObj(db *sql.DB, reply interface{}, query string, args ...interface{}) (err error) {
+func (db DBU) LoadObj(reply interface{}, query string, args ...interface{}) (err error) {
 	row := db.QueryRow(query, args...)
 	dest := sPtrs(reply)
 	err = row.Scan(dest...)
 	return
 }
 
-func dbLoadMany(db *sql.DB, query string, kind interface{}, args ...interface{}) (error, interface{}) {
+func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
 	rows, err := db.Query(query, args...)
@@ -299,7 +304,7 @@ func dbLoadMany(db *sql.DB, query string, kind interface{}, args ...interface{})
 	return err, s2.Interface()
 }
 
-func dbLoadMap(db *sql.DB, what interface{}, query string, args ...interface{}) (interface{}) {
+func (db DBU) LoadMap(what interface{}, query string, args ...interface{}) (interface{}) {
     maptype := reflect.TypeOf(what)
     elem := maptype.Elem()
     themap := reflect.MakeMap(maptype)
@@ -321,7 +326,7 @@ func dbLoadMap(db *sql.DB, what interface{}, query string, args ...interface{}) 
 }
 
 
-func dbRow(db *sql.DB, query string, args ...interface{}) (reply []string, err error) {
+func (db DBU) Row(query string, args ...interface{}) (reply []string, err error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return
@@ -340,7 +345,7 @@ func dbRow(db *sql.DB, query string, args ...interface{}) (reply []string, err e
 	return
 }
 
-func dbGetRow(db *sql.DB, query string, args ...interface{}) (reply map[string]string, err error) {
+func (db DBU) GetRow(query string, args ...interface{}) (reply map[string]string, err error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return
@@ -363,7 +368,7 @@ func dbGetRow(db *sql.DB, query string, args ...interface{}) (reply map[string]s
 	return
 }
 
-func dbTable(db *sql.DB, query string, args ...interface{}) (t Table, err error) {
+func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return
@@ -394,7 +399,7 @@ func dbTable(db *sql.DB, query string, args ...interface{}) (t Table, err error)
 	return
 }
 
-func dbRows(db *sql.DB, query string, args ...interface{}) (results []string, err error) {
+func (db DBU) Rows(query string, args ...interface{}) (results []string, err error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return
@@ -417,7 +422,7 @@ func startsWith(data, sub string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(data)), strings.ToUpper(sub))
 }
 
-func dbFile(db *sql.DB, file string) (err error) {
+func (db DBU) File(file string) (err error) {
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
 		return err
@@ -434,7 +439,7 @@ func dbFile(db *sql.DB, file string) (err error) {
 			continue
 		}
 		if len(line) >= dbpref && dbread == line[:dbpref] {
-			err = dbFile(db, line[dbpref:])
+			err = db.File(line[dbpref:])
 			if err != nil {
 				fmt.Println("READ FILE:", line[dbpref:], "ERR:", err)
 			}
@@ -457,7 +462,7 @@ func dbFile(db *sql.DB, file string) (err error) {
 	return
 }
 
-func dbCmd(db *sql.DB, query string) (affected, last int64, err error) {
+func (db DBU) Cmd(query string) (affected, last int64, err error) {
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
 		return
@@ -473,7 +478,7 @@ func dbCmd(db *sql.DB, query string) (affected, last int64, err error) {
 	return
 }
 
-func getPragma(db *sql.DB, pragma string) (status string) {
+func (db DBU) getPragma(pragma string) (status string) {
 	row := db.QueryRow("PRAGMA " + pragma)
 	err := row.Scan(&status)
 	if err != nil {
@@ -483,16 +488,16 @@ func getPragma(db *sql.DB, pragma string) (status string) {
 	return
 }
 
-func dbPragmas(db *sql.DB) (status map[string]string) {
+func (db DBU) Pragmas() (status map[string]string) {
 	status = make(map[string]string, 0)
 	for _, pragma := range pragmas {
-		status[pragma] = getPragma(db, pragma)
+		status[pragma] = db.getPragma(pragma)
 	}
 	return
 }
 
-func dbStats(db *sql.DB) (stats []string) {
-	status := dbPragmas(db)
+func (db DBU) Stats() (stats []string) {
+	status := db.Pragmas()
 	stats = make([]string, 0, len(status))
 	for _, pragma := range pragmas {
 		stats = append(stats, pragma+": "+status[pragma])
@@ -500,12 +505,12 @@ func dbStats(db *sql.DB) (stats []string) {
 	return
 }
 
-func dbDatabases(db *sql.DB) (t Table) {
-	t, _ = dbTable(db, "PRAGMA database_list")
+func (db DBU) Databases() (t Table) {
+	t, _ = db.Table("PRAGMA database_list")
 	return
 }
 
-func DBInit(dbfile, script string) (db *sql.DB, err error) {
+func DBInit(dbfile, script string) (db DBU, err error) {
 	os.Mkdir(path.Dir(dbfile), 0777)
 	var file *os.File
 	if file, err = os.OpenFile(dbfile, os.O_RDWR|os.O_CREATE, 0666); err != nil {
@@ -515,11 +520,11 @@ func DBInit(dbfile, script string) (db *sql.DB, err error) {
 	if db, err = dbOpen(dbfile); err != nil {
 		return
 	}
-	err = dbFile(db, script)
+	err = db.File(script)
 	return
 }
 
-func OpenDatabase(db_file, db_script string) (db *sql.DB) {
+func OpenDatabase(db_file, db_script string) (db DBU) {
 	if _, err := os.Stat(db_file); err != nil {
 		panic("DB does not exist.")
 	}
@@ -528,7 +533,7 @@ func OpenDatabase(db_file, db_script string) (db *sql.DB) {
 		panic("DATABASE ERROR:" + err.Error())
 	}
     if len(db_script) > 0 {
-        dbFile(db, db_script)
+        db.File(db_script)
     }
 	return
 }
