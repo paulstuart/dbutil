@@ -149,6 +149,33 @@ func objFields(obj interface{}, skip_key bool) []interface{} {
 	return a
 }
 
+func ObjQuery(obj interface{}, skip_key bool) string {
+    table := ""
+	t := reflect.TypeOf(obj)
+	list := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if len(f.Tag.Get("sql")) == 0 {
+			continue
+		}
+        name := f.Tag.Get("table")
+        if len(name) > 0 {
+			table = name
+        }
+		if skip_key {
+			key := f.Tag.Get("key")
+			if key == "true" {
+				continue
+			}
+		}
+		list = append(list, f.Tag.Get("sql"))
+	}
+    if len(table) == 0 {
+        panic("no table name specified for object:" + t.Name())
+    }
+	return "select " + strings.Join(list, ",") + " from " + table
+}
+
 func dbFields(obj interface{}, skip_key bool) string {
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
@@ -525,9 +552,6 @@ func DBInit(dbfile, script string) (db DBU, err error) {
 }
 
 func OpenDatabase(db_file, db_script string) (db DBU) {
-	if _, err := os.Stat(db_file); err != nil {
-		panic("DB does not exist.")
-	}
 	db, err := dbOpen(db_file)
 	if err != nil {
 		panic("DATABASE ERROR:" + err.Error())
