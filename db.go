@@ -45,12 +45,20 @@ func valuePlaceholders(n int) string {
 	return "(" + strings.Join(a, ",") + ")"
 }
 
-func (db DBU) InsertObj(table string, obj interface{}) (int64, error) {
+func (db DBU) ObjectInsert(obj interface{}) (id int64) {
 	a := objFields(obj, true)
-	f := dbFields(obj, true)
+	table, fields := dbFields(obj, true)
+    if len(table) == 0 {
+        panic(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
+    }
 	v := valuePlaceholders(len(a))
-	query := "insert into " + table + " (" + f + ") values " + v
-	return db.Insert(query, a...)
+	query := "insert into " + table + " (" + fields + ") values " + v
+    var err error
+	id, err = db.Insert(query, a...)
+    if err != nil {
+        panic(fmt.Sprintf("bad insert query: %s -- %s",query,err))
+    }
+    return
 }
 
 func (db DBU) UpdateObj(obj interface{}) (rec int64, err error) {
@@ -114,7 +122,7 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 		case string:
 			list = append(list, fmt.Sprintf("%s='%s'", k, v))
 		case time.Time:
-			list = append(list, fmt.Sprintf("%s='%s'", k, v))
+			list = append(list, fmt.Sprintf("%s=%d", k, v.(time.Time).Unix()))
 		case bool:
 			if v.(bool) {
 				list = append(list, fmt.Sprintf("%s=1", k))
@@ -124,6 +132,26 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 		default:
 			list = append(list, fmt.Sprintf("%s=%v", k, v))
 		}
+	}
+	fields = strings.Join(list, ",")
+	return
+}
+
+func dbFields(obj interface{}, skip_key bool) (table, fields string) {
+	t := reflect.TypeOf(obj)
+	list := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if is_table := f.Tag.Get("table"); len(is_table) > 0 {
+			table = is_table
+		}
+		if f.Tag.Get("key") == "true" && skip_key {
+			continue
+		}
+		k := f.Tag.Get("sql")
+        if len(k) > 0 {
+            list = append(list, k)
+        }
 	}
 	fields = strings.Join(list, ",")
 	return
@@ -176,11 +204,16 @@ func ObjQuery(obj interface{}, skip_key bool) string {
 	return "select " + strings.Join(list, ",") + " from " + table
 }
 
-func dbFields(obj interface{}, skip_key bool) string {
+func bFields(obj interface{}, skip_key bool) (table,fields string) {
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
+        name := f.Tag.Get("table")
+        if len(name) > 0 {
+			table = name
+            fmt.Println("FOUND TABLE:",table)
+        }
 		if len(f.Tag.Get("sql")) == 0 {
 			continue
 		}
@@ -192,7 +225,8 @@ func dbFields(obj interface{}, skip_key bool) string {
 		}
 		list = append(list, f.Tag.Get("sql"))
 	}
-	return strings.Join(list, ",")
+	fields = strings.Join(list, ",")
+    return
 }
 
 func keyName(obj interface{}) string {
@@ -318,6 +352,19 @@ func (db DBU) LoadObj(reply interface{}, query string, args ...interface{}) (err
 	return
 }
 
+func (db DBU) ObjectLoad(reply interface{}, extra string, args ...interface{}) (err error) {
+    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
+    query := ObjQuery(obj, false)
+    if len(extra) > 0 {
+        query += " " + extra
+    }
+    //fmt.Println("ObjectLoad query:",query)
+	row := db.QueryRow(query, args...)
+	dest := sPtrs(reply)
+	err = row.Scan(dest...)
+	return
+}
+
 func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
@@ -329,6 +376,34 @@ func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (err
 		s2 = reflect.Append(s2, v.Elem())
 	}
 	return err, s2.Interface()
+}
+
+
+func (db DBU) ObjectListQuery(kind interface{}, extra string, args ...interface{}) (interface{}) {
+    query := ObjQuery(kind, false)
+    if len(extra) > 0 {
+        query += " " + extra
+    }
+	t := reflect.TypeOf(kind)
+	results := reflect.Zero(reflect.SliceOf(t))
+	rows, err := db.Query(query, args...)
+    if err != nil {
+        panic("error on query: " + query + " -- " + err.Error())
+    }
+	for rows.Next() {
+		v := reflect.New(t)
+		dest := sPtrs(v.Interface())
+		err = rows.Scan(dest...)
+        if err != nil {
+            panic("scan error: " + err.Error())
+        }
+		results = reflect.Append(results, v.Elem())
+	}
+	return results.Interface()
+}
+
+func (db DBU) ObjectList(kind interface{}) (interface{}) {
+    return db.ObjectListQuery(kind, "")
 }
 
 func (db DBU) LoadMap(what interface{}, query string, args ...interface{}) (interface{}) {
