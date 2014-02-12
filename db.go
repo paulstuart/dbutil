@@ -2,6 +2,7 @@ package dbutil
 
 import (
 	"database/sql"
+    "errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -74,6 +75,23 @@ func (db DBU) UpdateObj(obj interface{}) (rec int64, err error) {
 	if err != nil {
 		fmt.Println("BAD QUERY:", query, "\nID:", id)
 	}
+	return
+}
+
+func (db DBU) ObjectDelete(obj interface{}) (err error) {
+	table, _, key, id := dbSetFields(obj)
+	if len(key) == 0 {
+        panic("No primary key for table: " + table)
+    }
+    query := fmt.Sprintf("delete from %s where %s=?", table, key)
+    rec, dberr := db.Update(query, id)
+	if dberr != nil {
+		fmt.Println("BAD QUERY:", query, "\nID:", id)
+        return dberr
+	}
+    if rec == 0 {
+        err = errors.New(fmt.Sprintf("No record deleted for id: %v", id))
+    }
 	return
 }
 
