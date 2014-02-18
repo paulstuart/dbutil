@@ -30,11 +30,12 @@ var (
 
 type DBU struct {
     *sql.DB
+    DSN string
 }
 
 func dbOpen(file string) (DBU, error) {
     db, err := sql.Open("sqlite3", file)
-    return DBU{db}, err
+    return DBU{db, file}, err
 }
 
 // helper to generate sql values placeholders
@@ -46,7 +47,7 @@ func valuePlaceholders(n int) string {
 	return "(" + strings.Join(a, ",") + ")"
 }
 
-func (db DBU) ObjectInsert(obj interface{}) (id int64) {
+func (db DBU) ObjectInsert(obj interface{}) (id int64, err error) {
 	a := objFields(obj, true)
 	table, fields := dbFields(obj, true)
     if len(table) == 0 {
@@ -54,11 +55,7 @@ func (db DBU) ObjectInsert(obj interface{}) (id int64) {
     }
 	v := valuePlaceholders(len(a))
 	query := "insert into " + table + " (" + fields + ") values " + v
-    var err error
 	id, err = db.Insert(query, a...)
-    if err != nil {
-        panic(fmt.Sprintf("bad insert query: %s -- %s",query,err))
-    }
     return
 }
 
@@ -383,6 +380,21 @@ func (db DBU) ObjectLoad(reply interface{}, extra string, args ...interface{}) (
 	return
 }
 
+/* TODO: fix this!
+func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
+    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
+    query := ObjQuery(obj, false)
+    if len(extra) > 0 {
+        query += " " + extra
+    }
+    //fmt.Println("ObjectLoad query:",query)
+	row := db.QueryRow(query, args...)
+	dest := sPtrs(reply)
+	err = row.Scan(dest...)
+	return
+}
+*/
+
 func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
@@ -575,7 +587,7 @@ func (db DBU) File(file string) (err error) {
 			continue
 		}
 		if _, err = db.Exec(line); err != nil {
-			fmt.Println("EXEC QUERY:", line, "ERR:", err)
+            fmt.Println("EXEC QUERY:", line, "\nFILE:",db.DSN,"\nERR:", err)
 			return
 		}
 	}
