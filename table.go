@@ -22,6 +22,11 @@ type Table struct {
 	SortCol int
 }
 
+// for testing if last row in whilst in a template
+func (t Table) LoopLen() int {
+	return len(t.Rows) - 1
+}
+
 func underlines(cols []string) []string {
 	u := make([]string, len(cols))
 	for i, c := range cols {
@@ -93,5 +98,5 @@ func (t Table) Dumper(h io.Writer, header bool) {
 }
 
 func (t Table) Print(header bool) {
-    t.Dumper(os.Stdout, header)
+	t.Dumper(os.Stdout, header)
 }

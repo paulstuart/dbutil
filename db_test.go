@@ -28,7 +28,7 @@ func init() {
 }
 
 func TestSqliteCreate(t *testing.T) {
-	test_db, err := dbOpen(test_file)
+	test_db, err := DBOpen(test_file, true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ = dbOpen(test_file)
+	test_db, _ = DBOpen(test_file, true)
 	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		fmt.Println("DELETE ERROR: ", err)
@@ -115,34 +115,34 @@ func TestSqliteObj(t *testing.T) {
         created     DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 	`
-    _, err := test_db.Exec(sql)
+	_, err := test_db.Exec(sql)
 	if err != nil {
 		log.Printf("%q: %s\n", err, sql)
 		return
 	}
 
-    query := "insert into structs (name,kind,data) values(?,?,?)"
+	query := "insert into structs (name,kind,data) values(?,?,?)"
 	_, err = test_db.Update(query, "bob", 23, "bakers")
 	if err != nil {
 		fmt.Println("INSERT ERROR: ", err)
-    }
+	}
 	_, err = test_db.Update(query, "betty", 23, "bowers")
 	if err != nil {
 		fmt.Println("INSERT ERROR: ", err)
-    }
+	}
 
-    results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
-    for k,v := range results {
-        fmt.Println("K:",k,"V:",v)
-    }
+	results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
+	for k, v := range results {
+		fmt.Println("K:", k, "V:", v)
+	}
 }
 
 func TestTable(t *testing.T) {
-    // TODO: Table chokes on time value
-    query := "select id,name,kind from structs"
-    table, err := test_db.Table(query)
+	// TODO: Table chokes on time value
+	query := "select id,name,kind from structs"
+	table, err := test_db.Table(query)
 	if err != nil {
 		t.Fatal(err)
 	}
-    table.Print(true)
+	table.Print(true)
 }

@@ -2,13 +2,15 @@ package dbutil
 
 import (
 	"database/sql"
-    "errors"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,9 +18,9 @@ import (
 )
 
 const (
-	pragma_list    = "journal_mode locking_mode page_size page_count read_uncommitted busy_timeout temp_store cache_size freelist_count compile_options"
-	dbread         = ".read "             // for sqlite interactive emulation
-	dbpref         = len(dbread)          // optimize for same
+	pragma_list = "journal_mode locking_mode page_size page_count read_uncommitted busy_timeout temp_store cache_size freelist_count compile_options"
+	dbread      = ".read "    // for sqlite interactive emulation
+	dbpref      = len(dbread) // optimize for same
 )
 
 var (
@@ -29,13 +31,24 @@ var (
 )
 
 type DBU struct {
-    *sql.DB
-    DSN string
+	*sql.DB
+	DSN   string
+	Debug bool
 }
 
-func dbOpen(file string) (DBU, error) {
-    db, err := sql.Open("sqlite3", file)
-    return DBU{db, file}, err
+// struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
+//  where key and table are used for a single entry
+func DBOpen(file string, init bool) (DBU, error) {
+	if init {
+		os.Mkdir(path.Dir(file), 0777)
+		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
+			return DBU{}, err
+		} else {
+			f.Close()
+		}
+	}
+	db, err := sql.Open("sqlite3", file)
+	return DBU{db, file, false}, err
 }
 
 // helper to generate sql values placeholders
@@ -47,49 +60,45 @@ func valuePlaceholders(n int) string {
 	return "(" + strings.Join(a, ",") + ")"
 }
 
-func (db DBU) ObjectInsert(obj interface{}) (id int64, err error) {
-	a := objFields(obj, true)
-	table, fields := dbFields(obj, true)
-    if len(table) == 0 {
-        panic(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
-    }
+func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
+	skip := !keyIsSet(obj) // if we have a key, we should probably use it
+	//fmt.Println("SKIP:",skip,"KEY:",obj)
+	a := objFields(obj, skip)
+	table, fields := dbFields(obj, skip)
+	if len(table) == 0 {
+		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
+	}
 	v := valuePlaceholders(len(a))
-	query := "insert into " + table + " (" + fields + ") values " + v
-	id, err = db.Insert(query, a...)
-    return
+	Query := "insert into " + table + " (" + fields + ") values " + v
+	return db.Insert(Query, a...)
 }
 
-func (db DBU) UpdateObj(obj interface{}) (rec int64, err error) {
-	var query string
+func (db DBU) ObjectUpdate(obj interface{}) (int64, error) {
 	table, fields, key, id := dbSetFields(obj)
 	if len(key) > 0 {
-		query = fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
-		rec, err = db.Update(query, id)
+		Query := fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
+		return db.Update(Query, id)
 	} else {
-		query = fmt.Sprintf("update %s set %s", table, fields)
-		rec, err = db.Update(query)
+		Query := fmt.Sprintf("update %s set %s", table, fields)
+		return db.Update(Query)
 	}
-	if err != nil {
-		fmt.Println("BAD QUERY:", query, "\nID:", id)
-	}
-	return
 }
 
-func (db DBU) ObjectDelete(obj interface{}) (err error) {
+func (db DBU) ObjectDelete(obj interface{}) error {
 	table, _, key, id := dbSetFields(obj)
 	if len(key) == 0 {
-        panic("No primary key for table: " + table)
-    }
-    query := fmt.Sprintf("delete from %s where %s=?", table, key)
-    rec, dberr := db.Update(query, id)
-	if dberr != nil {
-		fmt.Println("BAD QUERY:", query, "\nID:", id)
-        return dberr
+		return errors.New("No primary key for table: " + table)
 	}
-    if rec == 0 {
-        err = errors.New(fmt.Sprintf("No record deleted for id: %v", id))
-    }
-	return
+	Query := fmt.Sprintf("delete from %s where %s=?", table, key)
+	rec, err := db.Update(Query, id)
+	if err != nil {
+		fmt.Println("BAD QUERY:", Query, "\nID:", id)
+		return err
+	}
+	if rec == 0 {
+		return errors.New(fmt.Sprintf("No record deleted for id: %v", id))
+	}
+	return nil
 }
 
 // make slice of pointers to struct members for sql scanner
@@ -130,6 +139,7 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 		is_key := f.Tag.Get("key")
 		if is_key == "true" {
 			key = k
+			//TODO: handle ints as well
 			id = v.(int64)
 			continue
 		}
@@ -138,6 +148,8 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 			list = append(list, fmt.Sprintf("%s='%s'", k, v))
 		case time.Time:
 			list = append(list, fmt.Sprintf("%s=%d", k, v.(time.Time).Unix()))
+		case *time.Time:
+			list = append(list, fmt.Sprintf("%s=%d", k, v.(*time.Time).Unix()))
 		case bool:
 			if v.(bool) {
 				list = append(list, fmt.Sprintf("%s=1", k))
@@ -152,6 +164,30 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 	return
 }
 
+func keyIsSet(obj interface{}) bool {
+	val := reflect.ValueOf(obj)
+	t := reflect.TypeOf(obj)
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Tag.Get("key") == "true" {
+			fmt.Println("KEY FIELD:", f.Name)
+			v := val.Field(i).Interface()
+			switch v.(type) {
+			case int:
+				fmt.Println("i KEY:", v.(int))
+				return v.(int) > 0
+			case int64:
+				return v.(int64) > 0
+				fmt.Println("d KEY:", v.(int64))
+			default:
+				fmt.Println("a KEY:", v)
+				return false
+			}
+		}
+	}
+	return false
+}
+
 func dbFields(obj interface{}, skip_key bool) (table, fields string) {
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
@@ -164,9 +200,9 @@ func dbFields(obj interface{}, skip_key bool) (table, fields string) {
 			continue
 		}
 		k := f.Tag.Get("sql")
-        if len(k) > 0 {
-            list = append(list, k)
-        }
+		if len(k) > 0 {
+			list = append(list, k)
+		}
 	}
 	fields = strings.Join(list, ",")
 	return
@@ -192,8 +228,8 @@ func objFields(obj interface{}, skip_key bool) []interface{} {
 	return a
 }
 
-func ObjQuery(obj interface{}, skip_key bool) string {
-    table := ""
+func createQuery(obj interface{}, skip_key bool) string {
+	table := ""
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
@@ -201,10 +237,10 @@ func ObjQuery(obj interface{}, skip_key bool) string {
 		if len(f.Tag.Get("sql")) == 0 {
 			continue
 		}
-        name := f.Tag.Get("table")
-        if len(name) > 0 {
+		name := f.Tag.Get("table")
+		if len(name) > 0 {
 			table = name
-        }
+		}
 		if skip_key {
 			key := f.Tag.Get("key")
 			if key == "true" {
@@ -213,35 +249,10 @@ func ObjQuery(obj interface{}, skip_key bool) string {
 		}
 		list = append(list, f.Tag.Get("sql"))
 	}
-    if len(table) == 0 {
-        panic("no table name specified for object:" + t.Name())
-    }
+	if len(table) == 0 {
+		return ("error: no table name specified for object:" + t.Name())
+	}
 	return "select " + strings.Join(list, ",") + " from " + table
-}
-
-func bFields(obj interface{}, skip_key bool) (table,fields string) {
-	t := reflect.TypeOf(obj)
-	list := make([]string, 0, t.NumField())
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-        name := f.Tag.Get("table")
-        if len(name) > 0 {
-			table = name
-            fmt.Println("FOUND TABLE:",table)
-        }
-		if len(f.Tag.Get("sql")) == 0 {
-			continue
-		}
-		if skip_key {
-			key := f.Tag.Get("key")
-			if key == "true" {
-				continue
-			}
-		}
-		list = append(list, f.Tag.Get("sql"))
-	}
-	fields = strings.Join(list, ",")
-    return
 }
 
 func keyName(obj interface{}) string {
@@ -249,7 +260,7 @@ func keyName(obj interface{}) string {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if len(f.Tag.Get("key")) > 0 {
-            return f.Name
+			return f.Name
 		}
 	}
 	return ""
@@ -260,7 +271,7 @@ func keyIndex(obj interface{}) int {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if len(f.Tag.Get("key")) > 0 {
-            return i
+			return i
 		}
 	}
 	return 0 // TODO: error handling!
@@ -301,6 +312,9 @@ func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, er
 	if err != nil {
 		return
 	}
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", sqltext, "ARGS:", args)
+	}
 	stmt, err := tx.Prepare(sqltext)
 	if err != nil {
 		tx.Rollback()
@@ -321,16 +335,8 @@ func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, er
 	return
 }
 
-func (db DBU) String(query string, args ...interface{}) string {
-	s, err := db.GetString(query, args...)
-	if err == nil {
-		return s
-	}
-	return err.Error()
-}
-
-func (db DBU) Print(query string, args ...interface{}) {
-	s, err := db.GetString(query, args...)
+func (db DBU) Print(Query string, args ...interface{}) {
+	s, err := db.GetString(Query, args...)
 	if err != nil {
 		fmt.Println("ERROR:", err)
 	} else {
@@ -343,12 +349,15 @@ func (db DBU) GetString(query string, args ...interface{}) (reply string, err er
 	return
 }
 
-func (db DBU) GetInt(query string, args ...interface{}) (reply int, err error) {
-	err = db.GetType(query, &reply, args...)
+func (db DBU) GetInt(Query string, args ...interface{}) (reply int, err error) {
+	err = db.GetType(Query, &reply, args...)
 	return
 }
 
 func (db DBU) GetType(query string, reply interface{}, args ...interface{}) (err error) {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
 	row := db.QueryRow(query, args...)
 	err = row.Scan(reply)
 	return
@@ -360,44 +369,66 @@ func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err
 	return
 }
 
-func (db DBU) LoadObj(reply interface{}, query string, args ...interface{}) (err error) {
-	row := db.QueryRow(query, args...)
-	dest := sPtrs(reply)
-	err = row.Scan(dest...)
-	return
-}
-
-func (db DBU) ObjectLoad(reply interface{}, extra string, args ...interface{}) (err error) {
-    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
-    query := ObjQuery(obj, false)
-    if len(extra) > 0 {
-        query += " " + extra
-    }
-    //fmt.Println("ObjectLoad query:",query)
-	row := db.QueryRow(query, args...)
-	dest := sPtrs(reply)
-	err = row.Scan(dest...)
-	return
-}
-
-/* TODO: fix this!
-func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
-    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
-    query := ObjQuery(obj, false)
-    if len(extra) > 0 {
-        query += " " + extra
-    }
-    //fmt.Println("ObjectLoad query:",query)
-	row := db.QueryRow(query, args...)
+/*
+func (db DBU) LoadObj(reply interface{}, Query string, args ...interface{}) (err error) {
+	row := db.QueryRow(Query, args...)
 	dest := sPtrs(reply)
 	err = row.Scan(dest...)
 	return
 }
 */
 
-func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (error, interface{}) {
-	t := reflect.TypeOf(kind)
+func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (err error) {
+	r := reflect.Indirect(reflect.ValueOf(obj)).Interface()
+	query := createQuery(r, false)
+	if len(extra) > 0 {
+		query += " " + extra
+	}
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
+	row := db.QueryRow(query, args...)
+	dest := sPtrs(obj)
+	err = row.Scan(dest...)
+	return
+}
+
+/*
+func (db DBU) DoQuery(query string, args ...interface{}) (err error) {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
+	row := db.QueryRow(query, args...)
+	dest := sPtrs(obj)
+	err = row.Scan(dest...)
+	return
+}
+*/
+
+/* TODO: fix this!
+func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
+    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
+    query := createQuery(obj, false)
+    if len(extra) > 0 {
+        query += " " + extra
+    }
+    //fmt.Println("ObjectLoad Query:",Query)
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
+	row := db.QueryRow(Query, args...)
+	dest := sPtrs(reply)
+	err = row.Scan(dest...)
+	return
+}
+*/
+
+func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (error, interface{}) {
+	t := reflect.TypeOf(Kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
 	rows, err := db.Query(query, args...)
 	for rows.Next() {
 		v := reflect.New(t)
@@ -408,77 +439,136 @@ func (db DBU) LoadMany(query string, kind interface{}, args ...interface{}) (err
 	return err, s2.Interface()
 }
 
-
-func (db DBU) ObjectListQuery(kind interface{}, extra string, args ...interface{}) (interface{}) {
-    query := ObjQuery(kind, false)
-    if len(extra) > 0 {
-        query += " " + extra
-    }
-	t := reflect.TypeOf(kind)
+func (db DBU) objListQuery(Kind interface{}, extra string, args ...interface{}) (interface{}, error) {
+	Query := createQuery(Kind, false)
+	if len(extra) > 0 {
+		Query += " " + extra
+	}
+	t := reflect.TypeOf(Kind)
 	results := reflect.Zero(reflect.SliceOf(t))
-	rows, err := db.Query(query, args...)
-    if err != nil {
-        panic("error on query: " + query + " -- " + err.Error())
-    }
+	rows, err := db.Query(Query, args...)
+	if err != nil {
+		log.Println("error on Query: " + Query + " -- " + err.Error())
+		return nil, err
+	}
 	for rows.Next() {
 		v := reflect.New(t)
 		dest := sPtrs(v.Interface())
 		err = rows.Scan(dest...)
-        if err != nil {
-            panic("scan error: " + err.Error())
-        }
+		if err != nil {
+			log.Println("scan error: " + err.Error())
+            log.Println("scan query: " + Query + " args:", args)
+			return nil, err
+		}
 		results = reflect.Append(results, v.Elem())
 	}
-	return results.Interface()
+	return results.Interface(), nil
 }
 
-func (db DBU) ObjectList(kind interface{}) (interface{}) {
-    return db.ObjectListQuery(kind, "")
+func (db DBU) objList(Kind interface{}) (interface{}, error) {
+	return db.objListQuery(Kind, "")
 }
 
-func (db DBU) LoadMap(what interface{}, query string, args ...interface{}) (interface{}) {
-    maptype := reflect.TypeOf(what)
-    elem := maptype.Elem()
-    themap := reflect.MakeMap(maptype)
-    index := keyIndex(reflect.Zero(elem).Interface())
-	rows, err := db.Query(query, args...)
-    if err != nil {
-        panic("DB ERROR:" + err.Error())
-    }
+func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) interface{} {
+	maptype := reflect.TypeOf(what)
+	elem := maptype.Elem()
+	themap := reflect.MakeMap(maptype)
+	index := keyIndex(reflect.Zero(elem).Interface())
+	rows, err := db.Query(Query, args...)
+	if err != nil {
+		log.Println("LoadMap error:" + err.Error())
+		return nil
+	}
 	for rows.Next() {
 		v := reflect.New(elem)
 		dest := sPtrs(v.Interface())
 		err = rows.Scan(dest...)
-        k1 := dest[index]
-        k2 := reflect.ValueOf(k1)
-        key := reflect.Indirect(k2)
-        themap.SetMapIndex(key,v.Elem())
+		k1 := dest[index]
+		k2 := reflect.ValueOf(k1)
+		key := reflect.Indirect(k2)
+		themap.SetMapIndex(key, v.Elem())
 	}
-    return themap.Interface()
+	return themap.Interface()
 }
 
+func toString(in []interface{}) []string {
+	out := make([]string, 0, len(in))
+	for _, col := range in {
+		var s string
+		switch t := col.(type) {
+		case nil:
+			s = ""
+		case string:
+			s = col.(string)
+		case []uint8:
+			s = string(col.([]uint8))
+		case int32:
+			s = strconv.Itoa(col.(int))
+		case int64:
+			s = strconv.FormatInt(col.(int64), 10)
+		case time.Time:
+			s = col.(time.Time).String()
+		default:
+			fmt.Println("unhandled type:", t.(string))
+		}
+		out = append(out, s)
+	}
+	return out
+}
 
-func (db DBU) Row(query string, args ...interface{}) (reply []string, err error) {
-	rows, err := db.Query(query, args...)
+func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
+	var reply []string
+	rows, err := db.Query(Query, args...)
 	if err != nil {
-		return
+		return reply, err
 	}
 	defer rows.Close()
+	cols, _ := rows.Columns()
+	//buff := make([]sql.NullString, len(cols))
+	buff := make([]interface{}, len(cols))
+	//dest := make([]*string, len(cols))
+	dest := make([]interface{}, len(cols))
 	for rows.Next() {
-		cols, _ := rows.Columns()
-		reply := make([]string, len(cols))
-		dest := make([]*string, len(cols))
-		for i := range reply {
-			dest[i] = &reply[i]
+		//fmt.Println("COL LEN:", len(cols))
+		for i := range cols {
+			dest[i] = &(buff[i])
 		}
-		err = rows.Scan(dest)
+		err = rows.Scan(dest...)
 		break
 	}
-	return
+	/*
+		    reply = make([]string,0,len(cols))
+		    for i := range cols {
+		        //reply = append(reply, buff[i].String)
+		        reply = append(reply, buff[i].(string))
+		    }
+			return reply, err
+	*/
+	return toString(buff), err
 }
 
-func (db DBU) GetRow(query string, args ...interface{}) (reply map[string]string, err error) {
-	rows, err := db.Query(query, args...)
+func rawRow(r sql.Rows) ([]interface{}, error) {
+	cols, _ := r.Columns()
+	buff := make([]interface{}, len(cols))
+	dest := make([]interface{}, len(cols))
+	for i := range cols {
+		dest[i] = &(buff[i])
+	}
+	var err error
+	for r.Next() {
+		err = r.Scan(dest...)
+		break
+	}
+	return buff, err
+}
+
+func stringRow(r sql.Rows) ([]string, error) {
+	s, err := rawRow(r)
+	return toString(s), err
+}
+
+func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
+	rows, err := db.Query(Query, args...)
 	if err != nil {
 		return
 	}
@@ -501,6 +591,9 @@ func (db DBU) GetRow(query string, args ...interface{}) (reply map[string]string
 }
 
 func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return
@@ -513,8 +606,9 @@ func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 	}
 
 	for rows.Next() {
-		row := make([]sql.NullString, len(t.Columns))
-		final := make([]string, len(t.Columns))
+		//row := make([]sql.NullString, len(t.Columns))
+		row := make([]interface{}, len(t.Columns))
+		//final := make([]string, len(t.Columns))
 		dest := make([]interface{}, len(row))
 		for i := range t.Columns {
 			dest[i] = &row[i]
@@ -523,16 +617,18 @@ func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 		if err != nil {
 			fmt.Println("SCAN ERROR: ", err, "QUERY:", query)
 		}
-		for i := range row {
-			final[i] = row[i].String
-		}
-		t.Rows = append(t.Rows, final)
+		/*
+			for i := range row {
+				final[i] = row[i].String
+			}
+		*/
+		t.Rows = append(t.Rows, toString(row)) //final)
 	}
 	return
 }
 
-func (db DBU) Rows(query string, args ...interface{}) (results []string, err error) {
-	rows, err := db.Query(query, args...)
+func (db DBU) Rows(Query string, args ...interface{}) (results []string, err error) {
+	rows, err := db.Query(Query, args...)
 	if err != nil {
 		return
 	}
@@ -542,7 +638,7 @@ func (db DBU) Rows(query string, args ...interface{}) (results []string, err err
 		var dest string
 		err = rows.Scan(&dest)
 		if err != nil {
-			fmt.Println("SCAN ERR:", err, "QUERY:", query)
+			fmt.Println("SCAN ERR:", err, "QUERY:", Query)
 			return
 		}
 		results = append(results, dest)
@@ -554,7 +650,7 @@ func startsWith(data, sub string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(data)), strings.ToUpper(sub))
 }
 
-func (db DBU) File(file string) (err error) {
+func (db DBU) File(file string) error {
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
 		return err
@@ -564,7 +660,7 @@ func (db DBU) File(file string) (err error) {
 	clean = sql_comment.ReplaceAll(clean, []byte{})
 	clean = readline.ReplaceAll(clean, []byte("${1};")) // .read gets a fake ';' to split on
 	lines := strings.Split(string(clean), ";")
-	multi := "" // triggers are multiple lines
+	multiline := "" // triggers are multiple lines
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if 0 == len(line) {
@@ -577,31 +673,30 @@ func (db DBU) File(file string) (err error) {
 			}
 			continue
 		} else if startsWith(line, "CREATE TRIGGER") {
-			multi = line
+			multiline = line
 			continue
 		} else if startsWith(line, "END") {
-			line = multi + ";\n" + line
-			multi = ""
-		} else if len(multi) > 0 {
-			multi += ";\n" + line // restore our 'split' transaction
+			line = multiline + ";\n" + line
+			multiline = ""
+		} else if len(multiline) > 0 {
+			multiline += ";\n" + line // restore our 'split' transaction
 			continue
 		}
-		if _, err = db.Exec(line); err != nil {
-            fmt.Println("EXEC QUERY:", line, "\nFILE:",db.DSN,"\nERR:", err)
-			return
+		if _, err := db.Exec(line); err != nil {
+			fmt.Println("EXEC QUERY:", line, "\nFILE:", db.DSN, "\nERR:", err)
+			return err
 		}
 	}
-	return
+	return nil
 }
 
-func (db DBU) Cmd(query string) (affected, last int64, err error) {
-	query = strings.TrimSpace(query)
-	if 0 == len(query) {
+func (db DBU) Cmd(Query string) (affected, last int64, err error) {
+	Query = strings.TrimSpace(Query)
+	if 0 == len(Query) {
 		return
 	}
-	i, dberr := db.Exec(query)
+	i, dberr := db.Exec(Query)
 	if dberr != nil {
-		fmt.Println("ERR CMD QUERY:", query, "ERR:", dberr)
 		err = dberr
 		return
 	}
@@ -610,59 +705,31 @@ func (db DBU) Cmd(query string) (affected, last int64, err error) {
 	return
 }
 
-func (db DBU) getPragma(pragma string) (status string) {
+func (db DBU) Pragma(pragma string) (string, error) {
+	var status string
 	row := db.QueryRow("PRAGMA " + pragma)
 	err := row.Scan(&status)
-	if err != nil {
-		fmt.Println("pragma:", pragma, "error:", err)
-		return
-	}
-	return
+	return status, err
 }
 
-func (db DBU) Pragmas() (status map[string]string) {
-	status = make(map[string]string, 0)
+func (db DBU) Pragmas() map[string]string {
+	status := make(map[string]string, 0)
 	for _, pragma := range pragmas {
-		status[pragma] = db.getPragma(pragma)
+		status[pragma], _ = db.Pragma(pragma)
 	}
-	return
+	return status
 }
 
-func (db DBU) Stats() (stats []string) {
+func (db DBU) Stats() []string {
 	status := db.Pragmas()
-	stats = make([]string, 0, len(status))
+	stats := make([]string, 0, len(status))
 	for _, pragma := range pragmas {
 		stats = append(stats, pragma+": "+status[pragma])
 	}
-	return
+	return stats
 }
 
 func (db DBU) Databases() (t Table) {
 	t, _ = db.Table("PRAGMA database_list")
-	return
-}
-
-func DBInit(dbfile, script string) (db DBU, err error) {
-	os.Mkdir(path.Dir(dbfile), 0777)
-	var file *os.File
-	if file, err = os.OpenFile(dbfile, os.O_RDWR|os.O_CREATE, 0666); err != nil {
-		return
-	}
-	file.Close()
-	if db, err = dbOpen(dbfile); err != nil {
-		return
-	}
-	err = db.File(script)
-	return
-}
-
-func OpenDatabase(db_file, db_script string) (db DBU) {
-	db, err := dbOpen(db_file)
-	if err != nil {
-		panic("DATABASE ERROR:" + err.Error())
-	}
-    if len(db_script) > 0 {
-        db.File(db_script)
-    }
-	return
+	return t
 }
