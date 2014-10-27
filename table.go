@@ -100,3 +100,81 @@ func (t Table) Dumper(h io.Writer, header bool) {
 func (t Table) Print(header bool) {
 	t.Dumper(os.Stdout, header)
 }
+
+func inSet(i int, cols ...int) bool {
+	for _, col := range cols {
+		if col == i {
+			return true
+		}
+	}
+	return false
+}
+
+func columns(r Row, cols ...int) []string {
+	reply := make([]string, len(cols))
+	for i, col := range cols {
+		reply[i] = r[col]
+	}
+	return reply
+}
+
+func indicies(row []string, columns ...string) []int {
+	indx := make([]int, len(columns))
+	for i, col := range columns {
+		for x, name := range row {
+			if col == name {
+				indx[i] = x
+				break
+			}
+		}
+	}
+	return indx
+}
+
+func (r Row) Diff(reversed bool, other Row, cols ...int) Row {
+	reply := make([]string, len(r))
+	for i := range r {
+		switch {
+		case inSet(i, cols...):
+		case len(r[i]) == 0 && len(other[i]) == 0:
+		case len(r[i]) == 0 && len(other[i]) > 0:
+			if reversed {
+				reply[i] = "added: " + other[i]
+			} else {
+				reply[i] = "deleted: " + other[i]
+			}
+		case len(r[i]) > 0 && len(other[i]) == 0:
+			if reversed {
+				reply[i] = "deleted:" + r[i]
+			} else {
+				reply[i] = "added: " + other[i]
+			}
+		case r[i] != other[i]:
+			reply[i] = "changed: " + r[i] + " ==> " + other[i]
+		}
+	}
+	return reply
+}
+
+// generate table containing differences
+func (t Table) Diff(reversed bool, cols ...string) Table {
+	indx := indicies(t.Columns, cols...)
+	delta := Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
+	last := Row{}
+	for i, row := range t.Rows {
+		if i > 0 {
+			pref := columns(last, indx...)
+			diffs := row.Diff(reversed,last, indx...)
+			if len(diffs) > 0 {
+				for c, diff := range diffs {
+					if len(diff) > 0 {
+						changed := append(pref, t.Columns[c], diff)
+						delta.Rows = append(delta.Rows, changed)
+					}
+				}
+			}
+		}
+		last = row
+	}
+	return delta
+}

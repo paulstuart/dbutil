@@ -9,9 +9,10 @@ type QueryType int
 
 const (
 	Q_TABLE QueryType = iota
+	Q_BACKUP
 	Q_LIST
-    Q_STRING
-    Q_INSERT
+	Q_STRING
+	Q_INSERT
 	Q_DBG_ON
 	Q_DBG_OFF
 	Q_OBJ_GET
@@ -59,9 +60,9 @@ func DBServer(db_file, db_script string) (DBC, error) {
 			var err error
 			var obj interface{}
 			req := <-dbc
-            if db.Debug {
-                fmt.Fprintln(os.Stderr, "START:",req.Kind)
-            }
+			if db.Debug {
+				fmt.Fprintln(os.Stderr, "START:", req.Kind)
+			}
 			switch {
 			case req.Kind == Q_DBG_ON:
 				db.Debug = true
@@ -73,10 +74,8 @@ func DBServer(db_file, db_script string) (DBC, error) {
 				obj, err = db.Rows(req.Query, req.Args...)
 			case req.Kind == Q_OBJ_GET:
 				err = db.ObjectLoad(req.Obj, req.Query, req.Args...)
-				//obj = nil
 			case req.Kind == Q_OBJ_UPDATE:
 				_, err = db.ObjectUpdate(req.Obj)
-				//obj = nil
 			case req.Kind == Q_OBJ_LIST:
 				obj, err = db.objList(req.Obj)
 			case req.Kind == Q_OBJ_QUERY:
@@ -92,15 +91,17 @@ func DBServer(db_file, db_script string) (DBC, error) {
 				//obj = nil
 			case req.Kind == Q_EXEC:
 				obj, err = db.Update(req.Query, req.Args...)
-            case req.Kind == Q_STRING:
-                obj, err = db.GetString(req.Query, req.Args...)
-            case req.Kind == Q_INSERT:
-                obj, err = db.Insert(req.Query, req.Args...)
+			case req.Kind == Q_STRING:
+				obj, err = db.GetString(req.Query, req.Args...)
+			case req.Kind == Q_INSERT:
+				obj, err = db.Insert(req.Query, req.Args...)
+			case req.Kind == Q_BACKUP:
+				err = db.Save(req.Obj.(string))
 			}
 			req.Reply <- Reply{obj, err}
-            if db.Debug {
-                fmt.Fprintln(os.Stderr, "DONE:",req.Kind)
-            }
+			if db.Debug {
+				fmt.Fprintln(os.Stderr, "DONE:", req.Kind)
+			}
 		}
 	}()
 
@@ -194,7 +195,7 @@ func (d DBC) GetString(query string, args ...interface{}) (string, error) {
 	return r.Obj.(string), r.Err
 }
 
-func (d DBC) Insert(query string, args ...interface{}) (int64 , error) {
+func (d DBC) Insert(query string, args ...interface{}) (int64, error) {
 	c := NewDBQuery(Q_INSERT, query, args...)
 	d <- c
 	r := <-c.Reply
@@ -218,9 +219,16 @@ func (d DBC) ObjectsWhere(o interface{}, where string, args ...interface{}) (int
 }
 
 func (d DBC) Exec(query string, args ...interface{}) (int64, error) {
-    fmt.Println("EXEC Q:",query,"A:",args)
 	c := NewDBQuery(Q_EXEC, query, args...)
 	d <- c
 	r := <-c.Reply
 	return r.Obj.(int64), r.Err
+}
+
+func (d DBC) Backup(dest string) error {
+	c := NewDBQuery(Q_BACKUP, "")
+	c.Obj = dest
+	d <- c
+	r := <-c.Reply
+	return r.Err
 }

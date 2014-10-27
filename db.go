@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -31,14 +31,24 @@ var (
 )
 
 type DBU struct {
+	//*sqlite3.SQLiteConn
 	*sql.DB
-	DSN   string
-	Debug bool
+	DSN    string
+	Debug  bool
+	s3conn *sqlite3.SQLiteConn
 }
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
 func DBOpen(file string, init bool) (DBU, error) {
+	dbu := DBU{nil, file, false, nil}
+	sql.Register("s3",
+		&sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				dbu.s3conn = conn
+				return nil
+			},
+		})
 	if init {
 		os.Mkdir(path.Dir(file), 0777)
 		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
@@ -47,8 +57,10 @@ func DBOpen(file string, init bool) (DBU, error) {
 			f.Close()
 		}
 	}
-	db, err := sql.Open("sqlite3", file)
-	return DBU{db, file, false}, err
+	db, err := sql.Open("s3", file)
+	db.Ping()
+	dbu.DB = db
+	return dbu, err
 }
 
 // helper to generate sql values placeholders
@@ -62,25 +74,24 @@ func valuePlaceholders(n int) string {
 
 func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	skip := !keyIsSet(obj) // if we have a key, we should probably use it
-	//fmt.Println("SKIP:",skip,"KEY:",obj)
 	a := objFields(obj, skip)
 	table, fields := dbFields(obj, skip)
 	if len(table) == 0 {
 		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
 	}
 	v := valuePlaceholders(len(a))
-	Query := "insert into " + table + " (" + fields + ") values " + v
-	return db.Insert(Query, a...)
+	query := "insert into " + table + " (" + fields + ") values " + v
+	return db.Insert(query, a...)
 }
 
 func (db DBU) ObjectUpdate(obj interface{}) (int64, error) {
 	table, fields, key, id := dbSetFields(obj)
 	if len(key) > 0 {
-		Query := fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
-		return db.Update(Query, id)
+		query := fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
+		return db.Update(query, id)
 	} else {
-		Query := fmt.Sprintf("update %s set %s", table, fields)
-		return db.Update(Query)
+		query := fmt.Sprintf("update %s set %s", table, fields)
+		return db.Update(query)
 	}
 }
 
@@ -89,10 +100,10 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 	if len(key) == 0 {
 		return errors.New("No primary key for table: " + table)
 	}
-	Query := fmt.Sprintf("delete from %s where %s=?", table, key)
-	rec, err := db.Update(Query, id)
+	query := fmt.Sprintf("delete from %s where %s=?", table, key)
+	rec, err := db.Update(query, id)
 	if err != nil {
-		fmt.Println("BAD QUERY:", Query, "\nID:", id)
+		fmt.Println("BAD QUERY:", query, "\nID:", id)
 		return err
 	}
 	if rec == 0 {
@@ -457,7 +468,7 @@ func (db DBU) objListQuery(Kind interface{}, extra string, args ...interface{}) 
 		err = rows.Scan(dest...)
 		if err != nil {
 			log.Println("scan error: " + err.Error())
-            log.Println("scan query: " + Query + " args:", args)
+			log.Println("scan query: "+Query+" args:", args)
 			return nil, err
 		}
 		results = reflect.Append(results, v.Elem())
@@ -524,26 +535,15 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 	}
 	defer rows.Close()
 	cols, _ := rows.Columns()
-	//buff := make([]sql.NullString, len(cols))
 	buff := make([]interface{}, len(cols))
-	//dest := make([]*string, len(cols))
 	dest := make([]interface{}, len(cols))
 	for rows.Next() {
-		//fmt.Println("COL LEN:", len(cols))
 		for i := range cols {
 			dest[i] = &(buff[i])
 		}
 		err = rows.Scan(dest...)
 		break
 	}
-	/*
-		    reply = make([]string,0,len(cols))
-		    for i := range cols {
-		        //reply = append(reply, buff[i].String)
-		        reply = append(reply, buff[i].(string))
-		    }
-			return reply, err
-	*/
 	return toString(buff), err
 }
 
@@ -606,9 +606,7 @@ func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 	}
 
 	for rows.Next() {
-		//row := make([]sql.NullString, len(t.Columns))
 		row := make([]interface{}, len(t.Columns))
-		//final := make([]string, len(t.Columns))
 		dest := make([]interface{}, len(row))
 		for i := range t.Columns {
 			dest[i] = &row[i]
@@ -617,11 +615,6 @@ func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 		if err != nil {
 			fmt.Println("SCAN ERROR: ", err, "QUERY:", query)
 		}
-		/*
-			for i := range row {
-				final[i] = row[i].String
-			}
-		*/
 		t.Rows = append(t.Rows, toString(row)) //final)
 	}
 	return
@@ -732,4 +725,88 @@ func (db DBU) Stats() []string {
 func (db DBU) Databases() (t Table) {
 	t, _ = db.Table("PRAGMA database_list")
 	return t
+}
+
+func Backup(src, dest string) {
+	sqlite3conn := []*sqlite3.SQLiteConn{}
+	sql.Register("backup_hook",
+		&sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				sqlite3conn = append(sqlite3conn, conn)
+				return nil
+			},
+		})
+	os.Remove(dest)
+
+	destDb, err := sql.Open("backup_hook", dest)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer destDb.Close()
+	destDb.Ping()
+
+	srcDb, err := sql.Open("backup_hook", src)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer srcDb.Close()
+	srcDb.Ping()
+
+	bk, err := sqlite3conn[0].Backup("main", sqlite3conn[1], "main")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		fmt.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		done, err := bk.Step(1024)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if done {
+			break
+		}
+	}
+	bk.Finish()
+}
+
+// calling this other than Backup for distinction
+func (db DBU) Save(to string) error {
+	dest := &sqlite3.SQLiteConn{}
+	sql.Register("backup",
+		&sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				dest = conn
+				return nil
+			},
+		})
+	os.Remove(to)
+
+	destDb, err := sql.Open("backup", to)
+	if err != nil {
+		//log.Fatal(err)
+		return err
+	}
+	defer destDb.Close()
+	destDb.Ping()
+
+	bk, err := dest.Backup("main", db.s3conn, "main")
+	if err != nil {
+		//log.Fatal(err)
+		return err
+	}
+
+	for {
+		fmt.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		done, err := bk.Step(1024)
+		if err != nil {
+			//log.Fatal(err)
+			return err
+		}
+		if done {
+			break
+		}
+	}
+	bk.Finish()
+	return nil
 }
