@@ -140,9 +140,9 @@ func (r Row) diff(prior Row, cols ...int) Row {
 		case len(r[i]) == 0 && len(prior[i]) > 0:
 			reply[i] = "deleted: " + prior[i]
 		case len(r[i]) > 0 && len(prior[i]) == 0:
-			reply[i] = "added: " + prior[i]
+			reply[i] = "added: " + r[i]
 		case r[i] != prior[i]:
-			reply[i] = "changed: " + r[i] + " ==> " + prior[i]
+			reply[i] = "changed: " + prior[i] + " ==> " + r[i]
 		}
 	}
 	return reply
