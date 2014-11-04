@@ -125,7 +125,6 @@ func (db DBU) ObjectUpdate(obj interface{}) error {
 	}
 	args = append(args, id)
 	query := fmt.Sprintf("update %s set %s where %s=?", table, strings.Join(list, ","), key)
-	fmt.Println("UPDATE QUERY:", query, "ARGS:", args)
 
 	_, err := db.Update(query, args...)
 	return err
@@ -139,11 +138,10 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 	query := fmt.Sprintf("delete from %s where %s=?", table, key)
 	rec, err := db.Update(query, id)
 	if err != nil {
-		fmt.Println("BAD QUERY:", query, "\nID:", id)
-		return err
+        return fmt.Errorf("BAD QUERY:%s ID:%v ERROR:%v", query, id, err)
 	}
 	if rec == 0 {
-		return errors.New(fmt.Sprintf("No record deleted for id: %v", id))
+		return fmt.Errorf("No record deleted for id: %v", id)
 	}
 	return nil
 }
@@ -197,17 +195,13 @@ func keyIsSet(obj interface{}) bool {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if f.Tag.Get("key") == "true" {
-			//fmt.Println("KEY FIELD:", f.Name)
 			v := val.Field(i).Interface()
 			switch v.(type) {
 			case int:
-				//fmt.Println("i KEY:", v.(int))
 				return v.(int) > 0
 			case int64:
 				return v.(int64) > 0
-				//fmt.Println("d KEY:", v.(int64))
 			default:
-				//fmt.Println("a KEY:", v)
 				return false
 			}
 		}
