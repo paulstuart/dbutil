@@ -131,46 +131,42 @@ func indicies(row []string, columns ...string) []int {
 	return indx
 }
 
-func (r Row) Diff(reversed bool, other Row, cols ...int) Row {
+func (r Row) diff(prior Row, cols ...int) Row {
 	reply := make([]string, len(r))
 	for i := range r {
 		switch {
 		case inSet(i, cols...):
-		case len(r[i]) == 0 && len(other[i]) == 0:
-		case len(r[i]) == 0 && len(other[i]) > 0:
-			if reversed {
-				reply[i] = "added: " + other[i]
-			} else {
-				reply[i] = "deleted: " + other[i]
-			}
-		case len(r[i]) > 0 && len(other[i]) == 0:
-			if reversed {
-				reply[i] = "deleted:" + r[i]
-			} else {
-				reply[i] = "added: " + other[i]
-			}
-		case r[i] != other[i]:
-			reply[i] = "changed: " + r[i] + " ==> " + other[i]
+		case len(r[i]) == 0 && len(prior[i]) == 0:
+		case len(r[i]) == 0 && len(prior[i]) > 0:
+			reply[i] = "deleted: " + prior[i]
+		case len(r[i]) > 0 && len(prior[i]) == 0:
+			reply[i] = "added: " + prior[i]
+		case r[i] != prior[i]:
+			reply[i] = "changed: " + r[i] + " ==> " + prior[i]
 		}
 	}
 	return reply
 }
 
-// generate table containing differences
+// generate table containing differences, cols are columns
+// that are ignored but retained, e.g., timestamps
 func (t Table) Diff(reversed bool, cols ...string) Table {
 	indx := indicies(t.Columns, cols...)
 	delta := Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
 	last := Row{}
 	for i, row := range t.Rows {
 		if i > 0 {
+			var diffs Row
+			if reversed {
+				diffs = last.diff(row, indx...)
+			} else {
+				diffs = row.diff(last, indx...)
+			}
 			pref := columns(last, indx...)
-			diffs := row.Diff(reversed, last, indx...)
-			if len(diffs) > 0 {
-				for c, diff := range diffs {
-					if len(diff) > 0 {
-						changed := append(pref, t.Columns[c], diff)
-						delta.Rows = append(delta.Rows, changed)
-					}
+			for c, diff := range diffs {
+				if len(diff) > 0 {
+					changed := append(pref, t.Columns[c], diff)
+					delta.Rows = append(delta.Rows, changed)
 				}
 			}
 		}

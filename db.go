@@ -418,7 +418,6 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	return
 }
 
-
 /* TODO: fix this!
 func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
     obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
