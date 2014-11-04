@@ -21,6 +21,14 @@ type testStruct struct {
 	Created time.Time `sql:"created" update:"false"`
 }
 
+const struct_sql = `create table structs (
+        id integer not null primary key,
+        name text,
+        kind int,
+        data blob,
+        created     DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`
+
 type testMap map[int64]testStruct
 
 func init() {
@@ -36,7 +44,6 @@ func TestSqliteCreate(t *testing.T) {
 
 	sql := `
 	create table foo (id integer not null primary key, name text);
-	create table structs (id integer not null primary key, name text);
 	delete from foo;
 	`
 	_, err = test_db.Exec(sql)
@@ -106,31 +113,62 @@ func TestSqliteTable(t *testing.T) {
 	table.Dumper(os.Stdout, true)
 }
 
-func TestSqliteObj(t *testing.T) {
-	sql := `create table structs (
-        id integer not null primary key,
-        name text,
-        kind int,
-        data blob,
-        created     DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-	`
-	_, err := test_db.Exec(sql)
+func TestObjects(t *testing.T) {
+	_, err := test_db.Exec(struct_sql)
 	if err != nil {
-		log.Printf("%q: %s\n", err, sql)
-		return
+		t.Fatal(err)
 	}
+	s1 := testStruct{
+		Name:    "Bobby Tables",
+		Kind:    23,
+		Data:    []byte("binary data"),
+		Created: time.Now(),
+	}
+	s1.ID, err = test_db.ObjectInsert(s1)
+	if err != nil {
+		t.Errorf("OBJ INSERT ERROR: ", err)
+	}
+	s2 := testStruct{
+		Name:    "Master Blaster",
+		Kind:    999,
+		Data:    []byte("whatever you like"),
+		Created: time.Now(),
+	}
+	s2.ID, err = test_db.ObjectInsert(s2)
+	if err != nil {
+		t.Errorf("OBJ INSERT ERROR: ", err)
+	}
+	s3 := testStruct{
+		Name:    "A Keeper",
+		Kind:    123,
+		Data:    []byte("stick around"),
+		Created: time.Now(),
+	}
+	s3.ID, err = test_db.ObjectInsert(s3)
+	if err != nil {
+		t.Errorf("OBJ INSERT ERROR: ", err)
+	}
+	/*
+	   test_db.Update("update structs set kind=? where id=?", 99, s1.ID)
+	   test_db.Update("update structs set name=? where id=?", "Master Update", s2.ID)
+	*/
+	s1.Kind = 99
+	err = test_db.ObjectUpdate(s1)
+	if err != nil {
+		t.Errorf("OBJ UPDATE ERROR: ", err)
+	}
+	s2.Name = "New Name"
+	err = test_db.ObjectUpdate(s2)
+	if err != nil {
+		t.Errorf("OBJ UPDATE ERROR: ", err)
+	}
+	err = test_db.ObjectDelete(s2)
+	if err != nil {
+		t.Errorf("OBJ DELETE ERROR: ", err)
+	}
+}
 
-	query := "insert into structs (name,kind,data) values(?,?,?)"
-	_, err = test_db.Update(query, "bob", 23, "bakers")
-	if err != nil {
-		fmt.Println("INSERT ERROR: ", err)
-	}
-	_, err = test_db.Update(query, "betty", 23, "bowers")
-	if err != nil {
-		fmt.Println("INSERT ERROR: ", err)
-	}
-
+func TestLoadMap(t *testing.T) {
 	results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
 	for k, v := range results {
 		fmt.Println("K:", k, "V:", v)
@@ -138,7 +176,6 @@ func TestSqliteObj(t *testing.T) {
 }
 
 func TestTable(t *testing.T) {
-	// TODO: Table chokes on time value
 	query := "select id,name,kind from structs"
 	table, err := test_db.Table(query)
 	if err != nil {

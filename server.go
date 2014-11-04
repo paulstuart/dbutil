@@ -75,7 +75,7 @@ func DBServer(db_file, db_script string) (DBC, error) {
 			case req.Kind == Q_OBJ_GET:
 				err = db.ObjectLoad(req.Obj, req.Query, req.Args...)
 			case req.Kind == Q_OBJ_UPDATE:
-				_, err = db.ObjectUpdate(req.Obj)
+				err = db.ObjectUpdate(req.Obj)
 			case req.Kind == Q_OBJ_LIST:
 				obj, err = db.objList(req.Obj)
 			case req.Kind == Q_OBJ_QUERY:

@@ -164,7 +164,7 @@ func (t Table) Diff(reversed bool, cols ...string) Table {
 	for i, row := range t.Rows {
 		if i > 0 {
 			pref := columns(last, indx...)
-			diffs := row.Diff(reversed,last, indx...)
+			diffs := row.Diff(reversed, last, indx...)
 			if len(diffs) > 0 {
 				for c, diff := range diffs {
 					if len(diff) > 0 {

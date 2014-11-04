@@ -28,27 +28,34 @@ var (
 	c_comment   = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	sql_comment = regexp.MustCompile(`\s*--.*`)
 	readline    = regexp.MustCompile(`(\.read \S+)`)
+	activeConn  *sqlite3.SQLiteConn
 )
 
 type DBU struct {
-	//*sqlite3.SQLiteConn
 	*sql.DB
-	DSN    string
-	Debug  bool
-	s3conn *sqlite3.SQLiteConn
+	fileName string
+	Debug    bool
+}
+
+// The only way to get access to the sqliteconn, which is needed to be able to generate
+// a backup from the database while it is open. This is a less than satisfactory approach
+// because there's no way to have multiple instances open associate the connection with the DSN
+//
+// Since our use case is to normally have one instance open this should be workable for now
+func init() {
+	sql.Register("s3",
+		&sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				activeConn = conn
+				return nil
+			},
+		})
 }
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
 func DBOpen(file string, init bool) (DBU, error) {
-	dbu := DBU{nil, file, false, nil}
-	sql.Register("s3",
-		&sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				dbu.s3conn = conn
-				return nil
-			},
-		})
+	dbu := DBU{nil, file, false}
 	if init {
 		os.Mkdir(path.Dir(file), 0777)
 		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
@@ -74,8 +81,8 @@ func valuePlaceholders(n int) string {
 
 func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	skip := !keyIsSet(obj) // if we have a key, we should probably use it
-	a := objFields(obj, skip)
-	table, fields := dbFields(obj, skip)
+	_, a := objFields(obj, skip)
+	table, _, fields := dbFields(obj, skip)
 	if len(table) == 0 {
 		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
 	}
@@ -84,19 +91,48 @@ func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	return db.Insert(query, a...)
 }
 
-func (db DBU) ObjectUpdate(obj interface{}) (int64, error) {
-	table, fields, key, id := dbSetFields(obj)
-	if len(key) > 0 {
-		query := fmt.Sprintf("update %s set %s where %s=?", table, fields, key)
-		return db.Update(query, id)
-	} else {
-		query := fmt.Sprintf("update %s set %s", table, fields)
-		return db.Update(query)
+func (db DBU) ObjectUpdate(obj interface{}) error {
+	var table, key string
+	var id interface{}
+	val := reflect.ValueOf(obj)
+	t := reflect.TypeOf(obj)
+	list := make([]string, 0, t.NumField())
+	args := make([]interface{}, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if is_table := f.Tag.Get("table"); len(is_table) > 0 {
+			table = is_table
+		}
+		if len(f.Tag.Get("sql")) == 0 {
+			continue
+		}
+		if f.Tag.Get("update") == "false" {
+			continue
+		}
+		k := f.Tag.Get("sql")
+		v := val.Field(i).Interface()
+		is_key := f.Tag.Get("key")
+		if is_key == "true" {
+			key = k
+			id = v
+			continue
+		}
+		args = append(args, val.Field(i).Interface())
+		list = append(list, fmt.Sprintf("%s=?", k))
 	}
+	if len(key) == 0 {
+		return fmt.Errorf("No key specified for object table: %s", table)
+	}
+	args = append(args, id)
+	query := fmt.Sprintf("update %s set %s where %s=?", table, strings.Join(list, ","), key)
+	fmt.Println("UPDATE QUERY:", query, "ARGS:", args)
+
+	_, err := db.Update(query, args...)
+	return err
 }
 
 func (db DBU) ObjectDelete(obj interface{}) error {
-	table, _, key, id := dbSetFields(obj)
+	table, key, id := deleteInfo(obj)
 	if len(key) == 0 {
 		return errors.New("No primary key for table: " + table)
 	}
@@ -129,11 +165,9 @@ func sPtrs(obj interface{}) []interface{} {
 	return data
 }
 
-// generate update statement data
-func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
+func deleteInfo(obj interface{}) (table, key string, id interface{}) {
 	val := reflect.ValueOf(obj)
 	t := reflect.TypeOf(obj)
-	list := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if is_table := f.Tag.Get("table"); len(is_table) > 0 {
@@ -150,28 +184,10 @@ func dbSetFields(obj interface{}) (table, fields, key string, id int64) {
 		is_key := f.Tag.Get("key")
 		if is_key == "true" {
 			key = k
-			//TODO: handle ints as well
-			id = v.(int64)
-			continue
-		}
-		switch v.(type) {
-		case string:
-			list = append(list, fmt.Sprintf("%s='%s'", k, v))
-		case time.Time:
-			list = append(list, fmt.Sprintf("%s=%d", k, v.(time.Time).Unix()))
-		case *time.Time:
-			list = append(list, fmt.Sprintf("%s=%d", k, v.(*time.Time).Unix()))
-		case bool:
-			if v.(bool) {
-				list = append(list, fmt.Sprintf("%s=1", k))
-			} else {
-				list = append(list, fmt.Sprintf("%s=0", k))
-			}
-		default:
-			list = append(list, fmt.Sprintf("%s=%v", k, v))
+			id = v
+			break
 		}
 	}
-	fields = strings.Join(list, ",")
 	return
 }
 
@@ -181,17 +197,17 @@ func keyIsSet(obj interface{}) bool {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if f.Tag.Get("key") == "true" {
-			fmt.Println("KEY FIELD:", f.Name)
+			//fmt.Println("KEY FIELD:", f.Name)
 			v := val.Field(i).Interface()
 			switch v.(type) {
 			case int:
-				fmt.Println("i KEY:", v.(int))
+				//fmt.Println("i KEY:", v.(int))
 				return v.(int) > 0
 			case int64:
 				return v.(int64) > 0
-				fmt.Println("d KEY:", v.(int64))
+				//fmt.Println("d KEY:", v.(int64))
 			default:
-				fmt.Println("a KEY:", v)
+				//fmt.Println("a KEY:", v)
 				return false
 			}
 		}
@@ -199,7 +215,9 @@ func keyIsSet(obj interface{}) bool {
 	return false
 }
 
-func dbFields(obj interface{}, skip_key bool) (table, fields string) {
+// generate list of sql fields for members.
+// if skip_key is true, do not include the key field in the list
+func dbFields(obj interface{}, skip_key bool) (table, key, fields string) {
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
@@ -207,10 +225,13 @@ func dbFields(obj interface{}, skip_key bool) (table, fields string) {
 		if is_table := f.Tag.Get("table"); len(is_table) > 0 {
 			table = is_table
 		}
-		if f.Tag.Get("key") == "true" && skip_key {
-			continue
-		}
 		k := f.Tag.Get("sql")
+		if f.Tag.Get("key") == "true" {
+			key = k
+			if skip_key {
+				continue
+			}
+		}
 		if len(k) > 0 {
 			list = append(list, k)
 		}
@@ -219,24 +240,26 @@ func dbFields(obj interface{}, skip_key bool) (table, fields string) {
 	return
 }
 
-func objFields(obj interface{}, skip_key bool) []interface{} {
+// marshal the object fields into an array
+func objFields(obj interface{}, skip_key bool) (interface{}, []interface{}) {
 	val := reflect.ValueOf(obj)
 	t := reflect.TypeOf(obj)
 	a := make([]interface{}, 0, t.NumField())
+	var key interface{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if len(f.Tag.Get("sql")) == 0 {
 			continue
 		}
-		if skip_key {
-			key := f.Tag.Get("key")
-			if key == "true" {
+		if f.Tag.Get("key") == "true" {
+			key = val.Field(i).Interface()
+			if skip_key {
 				continue
 			}
 		}
 		a = append(a, val.Field(i).Interface())
 	}
-	return a
+	return key, a
 }
 
 func createQuery(obj interface{}, skip_key bool) string {
@@ -380,15 +403,6 @@ func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err
 	return
 }
 
-/*
-func (db DBU) LoadObj(reply interface{}, Query string, args ...interface{}) (err error) {
-	row := db.QueryRow(Query, args...)
-	dest := sPtrs(reply)
-	err = row.Scan(dest...)
-	return
-}
-*/
-
 func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (err error) {
 	r := reflect.Indirect(reflect.ValueOf(obj)).Interface()
 	query := createQuery(r, false)
@@ -404,17 +418,6 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	return
 }
 
-/*
-func (db DBU) DoQuery(query string, args ...interface{}) (err error) {
-	if db.Debug {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
-	row := db.QueryRow(query, args...)
-	dest := sPtrs(obj)
-	err = row.Scan(dest...)
-	return
-}
-*/
 
 /* TODO: fix this!
 func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
@@ -547,26 +550,6 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 	return toString(buff), err
 }
 
-func rawRow(r sql.Rows) ([]interface{}, error) {
-	cols, _ := r.Columns()
-	buff := make([]interface{}, len(cols))
-	dest := make([]interface{}, len(cols))
-	for i := range cols {
-		dest[i] = &(buff[i])
-	}
-	var err error
-	for r.Next() {
-		err = r.Scan(dest...)
-		break
-	}
-	return buff, err
-}
-
-func stringRow(r sql.Rows) ([]string, error) {
-	s, err := rawRow(r)
-	return toString(s), err
-}
-
 func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
 	rows, err := db.Query(Query, args...)
 	if err != nil {
@@ -643,6 +626,7 @@ func startsWith(data, sub string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(data)), strings.ToUpper(sub))
 }
 
+// emulate ".read FILENAME"
 func (db DBU) File(file string) error {
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -676,7 +660,7 @@ func (db DBU) File(file string) error {
 			continue
 		}
 		if _, err := db.Exec(line); err != nil {
-			fmt.Println("EXEC QUERY:", line, "\nFILE:", db.DSN, "\nERR:", err)
+			fmt.Println("EXEC QUERY:", line, "\nFILE:", db.fileName, "\nERR:", err)
 			return err
 		}
 	}
@@ -727,15 +711,22 @@ func (db DBU) Databases() (t Table) {
 	return t
 }
 
-func Backup(src, dest string) {
-	sqlite3conn := []*sqlite3.SQLiteConn{}
+var (
+	backupConn []*sqlite3.SQLiteConn
+)
+
+func init() {
 	sql.Register("backup_hook",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				sqlite3conn = append(sqlite3conn, conn)
+				backupConn = append(backupConn, conn)
 				return nil
 			},
 		})
+}
+
+func Backup(src, dest string) {
+	backupConn = []*sqlite3.SQLiteConn{}
 	os.Remove(dest)
 
 	destDb, err := sql.Open("backup_hook", dest)
@@ -752,7 +743,7 @@ func Backup(src, dest string) {
 	defer srcDb.Close()
 	srcDb.Ping()
 
-	bk, err := sqlite3conn[0].Backup("main", sqlite3conn[1], "main")
+	bk, err := backupConn[0].Backup("main", backupConn[1], "main")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -784,15 +775,13 @@ func (db DBU) Save(to string) error {
 
 	destDb, err := sql.Open("backup", to)
 	if err != nil {
-		//log.Fatal(err)
 		return err
 	}
 	defer destDb.Close()
 	destDb.Ping()
 
-	bk, err := dest.Backup("main", db.s3conn, "main")
+	bk, err := dest.Backup("main", activeConn, "main")
 	if err != nil {
-		//log.Fatal(err)
 		return err
 	}
 
@@ -800,7 +789,6 @@ func (db DBU) Save(to string) error {
 		fmt.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
 		done, err := bk.Step(1024)
 		if err != nil {
-			//log.Fatal(err)
 			return err
 		}
 		if done {
