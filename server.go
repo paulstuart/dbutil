@@ -3,13 +3,13 @@ package dbutil
 import (
 	"fmt"
 	"os"
+    "time"
 )
 
 type QueryType int
 
 const (
 	Q_TABLE QueryType = iota
-	Q_BACKUP
 	Q_LIST
 	Q_STRING
 	Q_INSERT
@@ -41,20 +41,14 @@ type DBQuery struct {
 
 type DBC chan DBQuery
 
-func DBServer(db_file, db_script string) (DBC, error) {
+func Server(db_file, backup_dir string, backupFreq int) (DBC, error) {
+    var modified time.Time
 	dbc := make(chan DBQuery)
-	db, err := DBOpen(db_file, true)
+	db, err := Open(db_file, true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Can't start DB server: ", err)
 		return dbc, err
 	}
-	if len(db_script) > 0 {
-		if err := db.File(db_script); err != nil {
-			fmt.Fprintln(os.Stderr, "Script:", db_script, " failed : ", err)
-			return dbc, err
-		}
-	}
-
 	go func() {
 		for {
 			var err error
@@ -68,35 +62,38 @@ func DBServer(db_file, db_script string) (DBC, error) {
 				db.Debug = true
 			case req.Kind == Q_DBG_OFF:
 				db.Debug = false
+			case req.Kind == Q_OBJ_UPDATE:
+				err = db.ObjectUpdate(req.Obj)
+                modified = time.Now()
+			case req.Kind == Q_OBJ_INSERT:
+				obj, err = db.ObjectInsert(req.Obj)
+                modified = time.Now()
+			case req.Kind == Q_OBJ_DELETE:
+				err = db.ObjectDelete(req.Obj)
+                modified = time.Now()
+			case req.Kind == Q_EXEC:
+				obj, err = db.Update(req.Query, req.Args...)
+                modified = time.Now()
+			case req.Kind == Q_INSERT:
+				obj, err = db.Insert(req.Query, req.Args...)
+                modified = time.Now()
+
 			case req.Kind == Q_TABLE:
 				obj, err = db.Table(req.Query, req.Args...)
 			case req.Kind == Q_LIST:
 				obj, err = db.Rows(req.Query, req.Args...)
 			case req.Kind == Q_OBJ_GET:
 				err = db.ObjectLoad(req.Obj, req.Query, req.Args...)
-			case req.Kind == Q_OBJ_UPDATE:
-				err = db.ObjectUpdate(req.Obj)
 			case req.Kind == Q_OBJ_LIST:
-				obj, err = db.objList(req.Obj)
+				obj, err = db.ObjectList(req.Obj)
 			case req.Kind == Q_OBJ_QUERY:
-				obj, err = db.objListQuery(req.Obj, req.Query, req.Args...)
+				obj, err = db.ObjectListQuery(req.Obj, req.Query, req.Args...)
 			case req.Kind == Q_PRAGMAS:
 				obj = db.Pragmas()
 			case req.Kind == Q_STATS:
 				obj = db.Stats()
-			case req.Kind == Q_OBJ_INSERT:
-				obj, err = db.ObjectInsert(req.Obj)
-			case req.Kind == Q_OBJ_DELETE:
-				err = db.ObjectDelete(req.Obj)
-				//obj = nil
-			case req.Kind == Q_EXEC:
-				obj, err = db.Update(req.Query, req.Args...)
 			case req.Kind == Q_STRING:
 				obj, err = db.GetString(req.Query, req.Args...)
-			case req.Kind == Q_INSERT:
-				obj, err = db.Insert(req.Query, req.Args...)
-			case req.Kind == Q_BACKUP:
-				err = db.Save(req.Obj.(string))
 			}
 			req.Reply <- Reply{obj, err}
 			if db.Debug {
@@ -104,6 +101,21 @@ func DBServer(db_file, db_script string) (DBC, error) {
 			}
 		}
 	}()
+
+    go func() {
+        os.MkdirAll(backup_dir, 0755)
+        f := time.Second * time.Duration(backupFreq)
+        ticker := time.NewTicker(f)
+        const ts = "20060102_0304"
+        for t := range ticker.C {
+            if modified.Add(f).After(time.Now()) {
+                name := fmt.Sprintf("%s/backup_%s.db", backup_dir, t.Format(ts))
+				if err = db.Backup(name); err != nil {
+                    fmt.Fprintln(os.Stderr, "Backup error:", err)
+                }
+            }
+        }
+    }()
 
 	return dbc, nil
 }
@@ -113,7 +125,6 @@ func NewDBQuery(kind QueryType, where string, args ...interface{}) DBQuery {
 		Kind:  kind,
 		Query: where,
 		Args:  args,
-		//Err:  make(chan error),
 		Reply: make(chan Reply),
 	}
 }
@@ -225,10 +236,3 @@ func (d DBC) Exec(query string, args ...interface{}) (int64, error) {
 	return r.Obj.(int64), r.Err
 }
 
-func (d DBC) Backup(dest string) error {
-	c := NewDBQuery(Q_BACKUP, "")
-	c.Obj = dest
-	d <- c
-	r := <-c.Reply
-	return r.Err
-}

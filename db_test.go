@@ -36,7 +36,7 @@ func init() {
 }
 
 func TestSqliteCreate(t *testing.T) {
-	test_db, err := DBOpen(test_file, true)
+	test_db, err := Open(test_file, true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ = DBOpen(test_file, true)
+	test_db, _ = Open(test_file, true)
 	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		fmt.Println("DELETE ERROR: ", err)
@@ -182,4 +182,11 @@ func TestTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	table.Print(true)
+}
+
+func TestBackup(t *testing.T) {
+	err := test_db.Backup("test_backup.db")
+	if err != nil {
+		t.Fatal(err)
+	}
 }

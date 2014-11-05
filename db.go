@@ -29,6 +29,7 @@ var (
 	sql_comment = regexp.MustCompile(`\s*--.*`)
 	readline    = regexp.MustCompile(`(\.read \S+)`)
 	activeConn  *sqlite3.SQLiteConn
+	backupConn  *sqlite3.SQLiteConn
 )
 
 type DBU struct {
@@ -54,7 +55,7 @@ func init() {
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
-func DBOpen(file string, init bool) (DBU, error) {
+func Open(file string, init bool) (DBU, error) {
 	dbu := DBU{nil, file, false}
 	if init {
 		os.Mkdir(path.Dir(file), 0777)
@@ -446,7 +447,7 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 	return err, s2.Interface()
 }
 
-func (db DBU) objListQuery(Kind interface{}, extra string, args ...interface{}) (interface{}, error) {
+func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{}) (interface{}, error) {
 	Query := createQuery(Kind, false)
 	if len(extra) > 0 {
 		Query += " " + extra
@@ -472,8 +473,8 @@ func (db DBU) objListQuery(Kind interface{}, extra string, args ...interface{}) 
 	return results.Interface(), nil
 }
 
-func (db DBU) objList(Kind interface{}) (interface{}, error) {
-	return db.objListQuery(Kind, "")
+func (db DBU) ObjectList(Kind interface{}) (interface{}, error) {
+	return db.ObjectListQuery(Kind, "")
 }
 
 func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) interface{} {
@@ -704,66 +705,19 @@ func (db DBU) Databases() (t Table) {
 	return t
 }
 
-var (
-	backupConn []*sqlite3.SQLiteConn
-)
 
 func init() {
-	sql.Register("backup_hook",
-		&sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				backupConn = append(backupConn, conn)
-				return nil
-			},
-		})
-}
-
-func Backup(src, dest string) {
-	backupConn = []*sqlite3.SQLiteConn{}
-	os.Remove(dest)
-
-	destDb, err := sql.Open("backup_hook", dest)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer destDb.Close()
-	destDb.Ping()
-
-	srcDb, err := sql.Open("backup_hook", src)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer srcDb.Close()
-	srcDb.Ping()
-
-	bk, err := backupConn[0].Backup("main", backupConn[1], "main")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for {
-		fmt.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
-		done, err := bk.Step(1024)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if done {
-			break
-		}
-	}
-	bk.Finish()
-}
-
-// calling this other than Backup for distinction
-func (db DBU) Save(to string) error {
-	dest := &sqlite3.SQLiteConn{}
 	sql.Register("backup",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				dest = conn
+				backupConn = conn
 				return nil
 			},
 		})
+}
+
+
+func (db DBU) Backup(to string) error {
 	os.Remove(to)
 
 	destDb, err := sql.Open("backup", to)
@@ -773,7 +727,7 @@ func (db DBU) Save(to string) error {
 	defer destDb.Close()
 	destDb.Ping()
 
-	bk, err := dest.Backup("main", activeConn, "main")
+	bk, err := backupConn.Backup("main", activeConn, "main")
 	if err != nil {
 		return err
 	}
