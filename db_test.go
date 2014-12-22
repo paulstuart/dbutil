@@ -1,6 +1,7 @@
 package dbutil
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -139,7 +140,7 @@ func TestObjects(t *testing.T) {
 		t.Errorf("OBJ INSERT ERROR: ", err)
 	}
 	s3 := testStruct{
-		Name:    "A Keeper",
+		Name:    "A, Keeper",
 		Kind:    123,
 		Data:    []byte("stick around"),
 		Created: time.Now(),
@@ -182,6 +183,41 @@ func TestTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	table.Print(true)
+}
+
+func myStream(columns []string, count int, buffer []sql.RawBytes) {
+	fmt.Println("COLS:", columns)
+	for _, b := range buffer {
+		fmt.Println("V:", string(b))
+	}
+}
+
+func TestStream(t *testing.T) {
+	query := "select id,name,kind from structs"
+	err := test_db.Stream(myStream, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamCSV(t *testing.T) {
+	query := "select id,name,kind from structs"
+	fmt.Println("\nCSV:")
+	err := test_db.StreamCSV(os.Stdout, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println()
+}
+
+func TestStreamTab(t *testing.T) {
+	query := "select id,name,kind from structs"
+	fmt.Println("\nTAB:")
+	err := test_db.StreamTab(os.Stdout, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println()
 }
 
 func TestBackup(t *testing.T) {

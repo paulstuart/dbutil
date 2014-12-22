@@ -2,8 +2,10 @@ package dbutil
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -72,12 +74,12 @@ func Open(file string, init bool) (DBU, error) {
 }
 
 // helper to generate sql values placeholders
-func valuePlaceholders(n int) string {
+func Placeholders(n int) string {
 	a := make([]string, n)
 	for i := range a {
 		a[i] = "?"
 	}
-	return "(" + strings.Join(a, ",") + ")"
+	return strings.Join(a, ",")
 }
 
 func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
@@ -87,8 +89,7 @@ func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	if len(table) == 0 {
 		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
 	}
-	v := valuePlaceholders(len(a))
-	query := "insert into " + table + " (" + fields + ") values " + v
+	query := fmt.Sprintf("insert into %s (%s) values (%s)", table, fields, Placeholders(len(a)))
 	return db.Insert(query, a...)
 }
 
@@ -139,7 +140,7 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 	query := fmt.Sprintf("delete from %s where %s=?", table, key)
 	rec, err := db.Update(query, id)
 	if err != nil {
-        return fmt.Errorf("BAD QUERY:%s ID:%v ERROR:%v", query, id, err)
+		return fmt.Errorf("BAD QUERY:%s ID:%v ERROR:%v", query, id, err)
 	}
 	if rec == 0 {
 		return fmt.Errorf("No record deleted for id: %v", id)
@@ -233,6 +234,22 @@ func dbFields(obj interface{}, skip_key bool) (table, key, fields string) {
 	}
 	fields = strings.Join(list, ",")
 	return
+}
+
+type SQLColumns map[string]bool
+
+func GetColumns(obj interface{}) SQLColumns {
+	columns := SQLColumns{}
+	t := reflect.TypeOf(obj)
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("sql")
+		if len(tag) == 0 {
+			continue
+		}
+		columns[tag] = (f.Tag.Get("key") == "true")
+	}
+	return columns
 }
 
 // marshal the object fields into an array
@@ -413,6 +430,24 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	return
 }
 
+/*
+func SetSqlValue(obj interface{}, column, word string) error {
+	r := reflect.Indirect(reflect.ValueOf(obj)).Interface()
+	val := reflect.ValueOf(obj)
+	base := reflect.Indirect(val)
+	t := reflect.TypeOf(base.Interface())
+	for i := 0; i < base.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("sql")
+		if tag != column {
+			continue
+		}
+			f := base.Field(i)
+			data = append(data, f.Addr().Interface())
+		}
+	}
+}
+*/
+
 /* TODO: fix this!
 func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
     obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
@@ -445,6 +480,62 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 		s2 = reflect.Append(s2, v.Elem())
 	}
 	return err, s2.Interface()
+}
+
+func (db DBU) Stream(fn func([]string, int, []sql.RawBytes), query string, args ...interface{}) error {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "STREAM QUERY:", query, "ARGS:", args)
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	buffer := make([]sql.RawBytes, len(columns))
+	dest := make([]interface{}, len(columns))
+	for i := 0; i < len(buffer); i++ {
+		dest[i] = &buffer[i]
+	}
+	i := 0
+	for rows.Next() {
+		err = rows.Scan(dest...)
+		fn(columns, i, buffer)
+		i++
+	}
+	return err
+}
+
+func rawStrings(raw []sql.RawBytes) []string {
+	s := make([]string, len(raw))
+	for i, v := range raw {
+		s[i] = string(v)
+	}
+	return s
+}
+
+func (db DBU) StreamCSV(w io.Writer, query string, args ...interface{}) error {
+	cw := csv.NewWriter(w)
+	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+		if count == 0 {
+			cw.Write(columns)
+		}
+		cw.Write(rawStrings(buffer))
+	}
+	defer cw.Flush()
+	return db.Stream(fn, query, args...)
+}
+
+func (db DBU) StreamTab(w io.Writer, query string, args ...interface{}) error {
+	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+		if count == 0 {
+			fmt.Fprintln(w, strings.Join(columns, "\t"))
+		}
+		fmt.Fprintln(w, strings.Join(rawStrings(buffer), "\t"))
+	}
+	return db.Stream(fn, query, args...)
 }
 
 func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{}) (interface{}, error) {
@@ -705,7 +796,6 @@ func (db DBU) Databases() (t Table) {
 	return t
 }
 
-
 func init() {
 	sql.Register("backup",
 		&sqlite3.SQLiteDriver{
@@ -715,7 +805,6 @@ func init() {
 			},
 		})
 }
-
 
 func (db DBU) Backup(to string) error {
 	os.Remove(to)
