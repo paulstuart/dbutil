@@ -40,6 +40,32 @@ type DBU struct {
 	Debug    bool
 }
 
+type DBObject interface {
+	InsertQuery() string
+	UpdateQuery() string
+	DeleteQuery() string
+	InsertValues() []interface{}
+	UpdateValues() []interface{}
+	Key() int64
+	SetID(int64)
+}
+
+func (db DBU) Add(o DBObject) error {
+	id, err := db.Insert(o.InsertQuery(), o.InsertValues()...)
+	o.SetID(id)
+	return err
+}
+
+func (db DBU) Save(o DBObject) error {
+	_, err := db.Update(o.UpdateQuery(), o.UpdateValues()...)
+	return err
+}
+
+func (db DBU) Delete(o DBObject) error {
+	_, err := db.Exec(o.DeleteQuery(), o.Key())
+	return err
+}
+
 // The only way to get access to the sqliteconn, which is needed to be able to generate
 // a backup from the database while it is open. This is a less than satisfactory approach
 // because there's no way to have multiple instances open associate the connection with the DSN

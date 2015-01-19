@@ -22,6 +22,34 @@ type testStruct struct {
 	Created time.Time `sql:"created" update:"false"`
 }
 
+func (s *testStruct) InsertQuery() string {
+	return "insert into structs (name,kind,data) values(?,?,?)"
+}
+
+func (s *testStruct) UpdateQuery() string {
+	return "update structs set name=?,kind=?,data=? where id=?"
+}
+
+func (s *testStruct) DeleteQuery() string {
+	return "delete from structs where id=?"
+}
+
+func (s *testStruct) UpdateValues() []interface{} {
+	return []interface{}{s.Name, s.Kind, s.Data, s.ID}
+}
+
+func (s *testStruct) InsertValues() []interface{} {
+	return []interface{}{s.Name, s.Kind, s.Data}
+}
+
+func (s *testStruct) SetID(id int64) {
+	s.ID = id
+}
+
+func (s *testStruct) Key() int64 {
+	return s.ID
+}
+
 const struct_sql = `create table structs (
         id integer not null primary key,
         name text,
@@ -166,6 +194,25 @@ func TestObjects(t *testing.T) {
 	err = test_db.ObjectDelete(s2)
 	if err != nil {
 		t.Errorf("OBJ DELETE ERROR: ", err)
+	}
+}
+
+func TestDBObject(t *testing.T) {
+	s := &testStruct{
+		Name: "Grammatic, Bro",
+		Kind: 2001,
+		Data: []byte("lorem ipsum"),
+	}
+	if err := test_db.Add(s); err != nil {
+		t.Fatal(err)
+	}
+	s.Kind = 2015
+	s.Name = "Void droid"
+	if err := test_db.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := test_db.Delete(s); err != nil {
+		t.Fatal(err)
 	}
 }
 
