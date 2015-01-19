@@ -852,3 +852,16 @@ func (db DBU) Backup(to string) error {
 	bk.Finish()
 	return nil
 }
+
+func Constrained(err error) (table, column string) {
+	const pre = "UNIQUE constraint failed: "
+	msg := err.Error()
+	if strings.HasPrefix(msg, pre) {
+		msg = msg[len(pre):]
+		if i := strings.Index(msg, "."); i > 0 {
+			table = msg[:i]
+			column = msg[i+1:]
+		}
+	}
+	return
+}
