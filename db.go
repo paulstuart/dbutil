@@ -73,6 +73,24 @@ func Open(file string, init bool) (DBU, error) {
 	return dbu, err
 }
 
+func CreateIfMissing(name, schema string) DBU {
+	var fresh bool
+	if _, err := os.Stat(name); os.IsNotExist(err) {
+		fresh = true
+	}
+	db, err := Open(name, true)
+	if err != nil {
+		panic(err)
+	}
+	if fresh {
+		err = db.File(schema)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return db
+}
+
 // helper to generate sql values placeholders
 func Placeholders(n int) string {
 	a := make([]string, n)
