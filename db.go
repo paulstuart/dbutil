@@ -81,6 +81,11 @@ func (db DBU) Find(o DBObject, keys QueryKeys) error {
 	return db.Get(o.MemberPointers(), query, what...)
 }
 
+func (db DBU) FindBy(o DBObject, key string, value interface{}) error {
+	query := fmt.Sprintf("select * from %s where %s=?", o.TableName(), key)
+	return db.Get(o.MemberPointers(), query, value)
+}
+
 // The only way to get access to the sqliteconn, which is needed to be able to generate
 // a backup from the database while it is open. This is a less than satisfactory approach
 // because there's no way to have multiple instances open associate the connection with the DSN
@@ -695,6 +700,9 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 }
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		log.Println("error on query: " + query + " -- " + err.Error())

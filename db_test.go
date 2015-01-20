@@ -2,16 +2,16 @@ package dbutil
 
 import (
 	"database/sql"
-	"fmt"
-	"log"
 	"os"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
 var (
 	test_db   DBU
 	test_file = "test.db"
+	w         = iotest.NewWriteLogger("", os.Stderr)
 )
 
 type testStruct struct {
@@ -75,7 +75,7 @@ func init() {
 func TestSqliteCreate(t *testing.T) {
 	test_db, err := Open(test_file, true)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	defer test_db.Close()
 
@@ -85,25 +85,25 @@ func TestSqliteCreate(t *testing.T) {
 	`
 	_, err = test_db.Exec(sql)
 	if err != nil {
-		log.Printf("%q: %s\n", err, sql)
+		t.Log("%q: %s\n", err, sql)
 		return
 	}
 
 	_, err = test_db.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 
 	rows, err := test_db.Query("select id, name from foo")
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int
 		var name string
 		rows.Scan(&id, &name)
-		fmt.Println(id, name)
+		t.Log(id, name)
 	}
 }
 
@@ -111,44 +111,46 @@ func TestSqliteDelete(t *testing.T) {
 	test_db, _ = Open(test_file, true)
 	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
-		fmt.Println("DELETE ERROR: ", err)
+		t.Fatal("DELETE ERROR: ", err)
 	}
-	fmt.Println("DELETED: ", cnt)
+	t.Log("DELETED: ", cnt)
 }
 
 func TestSqliteInsert(t *testing.T) {
 	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
-		fmt.Println("INSERT ERROR: ", err)
+		t.Log("INSERT ERROR: ", err)
 	}
-	fmt.Println("INSERTED: ", cnt)
+	t.Log("INSERTED: ", cnt)
 }
 
 func TestSqliteUpdate(t *testing.T) {
 	cnt, err := test_db.Update("update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
-		fmt.Println("UPDATE ERROR: ", err)
+		t.Log("UPDATE ERROR: ", err)
 	}
-	fmt.Println("UPDATED: ", cnt)
+	t.Log("UPDATED: ", cnt)
 }
 
 func TestSqliteType(t *testing.T) {
 	var cnt int
 	cnt = -2
 	test_db.GetType("select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
-	fmt.Println("COUNT: ", cnt)
+	t.Log("COUNT: ", cnt)
 }
 
 func TestSqliteString(t *testing.T) {
 	var name string
 	test_db.GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
-	fmt.Println("NAME: ", name)
+	t.Log("NAME: ", name)
 }
 
+/*
 func TestSqliteTable(t *testing.T) {
 	table, _ := test_db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
-	table.Dumper(os.Stdout, true)
+	table.Dumper(w, true)
 }
+*/
 
 func TestObjects(t *testing.T) {
 	_, err := test_db.Exec(struct_sql)
@@ -205,6 +207,20 @@ func TestObjects(t *testing.T) {
 	}
 }
 
+func TestFindBy(t *testing.T) {
+	s := testStruct{}
+	if err := test_db.FindBy(&s, "name", "Bobby Tables"); err != nil {
+		t.Error(err)
+	}
+	t.Log("BY NAME", s)
+	u := testStruct{}
+	if err := test_db.FindBy(&u, "id", 1); err != nil {
+		t.Error(err)
+	}
+	test_db.Debug = false
+	t.Log("BY ID", u)
+}
+
 func TestDBObject(t *testing.T) {
 	s := &testStruct{
 		Name: "Grammatic, Bro",
@@ -224,7 +240,7 @@ func TestDBObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fmt.Println("FOUND", z)
+	t.Log("FOUND", z)
 	if err := test_db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
@@ -233,27 +249,17 @@ func TestDBObject(t *testing.T) {
 func TestLoadMap(t *testing.T) {
 	results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
 	for k, v := range results {
-		fmt.Println("K:", k, "V:", v)
-	}
-}
-
-func TestTable(t *testing.T) {
-	query := "select id,name,kind from structs"
-	table, err := test_db.Table(query)
-	if err != nil {
-		t.Fatal(err)
-	}
-	table.Print(true)
-}
-
-func myStream(columns []string, count int, buffer []sql.RawBytes) {
-	fmt.Println("COLS:", columns)
-	for _, b := range buffer {
-		fmt.Println("V:", string(b))
+		t.Log("K:", k, "V:", v)
 	}
 }
 
 func TestStream(t *testing.T) {
+	myStream := func(columns []string, count int, buffer []sql.RawBytes) {
+		t.Log("STREAM COLS:", columns)
+		for _, b := range buffer {
+			t.Log("STREAM V:", string(b))
+		}
+	}
 	query := "select id,name,kind from structs"
 	err := test_db.Stream(myStream, query)
 	if err != nil {
@@ -263,22 +269,20 @@ func TestStream(t *testing.T) {
 
 func TestStreamCSV(t *testing.T) {
 	query := "select id,name,kind from structs"
-	fmt.Println("\nCSV:")
+	t.Log("\nCSV:")
 	err := test_db.StreamCSV(os.Stdout, query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println()
 }
 
 func TestStreamTab(t *testing.T) {
 	query := "select id,name,kind from structs"
-	fmt.Println("\nTAB:")
+	t.Log("\nTAB:")
 	err := test_db.StreamTab(os.Stdout, query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println()
 }
 
 func TestBackup(t *testing.T) {
