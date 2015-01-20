@@ -40,12 +40,16 @@ type DBU struct {
 	Debug    bool
 }
 
+type QueryKeys map[string]interface{}
+
 type DBObject interface {
+	TableName() string
 	InsertQuery() string
 	UpdateQuery() string
 	DeleteQuery() string
 	InsertValues() []interface{}
 	UpdateValues() []interface{}
+	MemberPointers() []interface{}
 	Key() int64
 	SetID(int64)
 }
@@ -64,6 +68,17 @@ func (db DBU) Save(o DBObject) error {
 func (db DBU) Delete(o DBObject) error {
 	_, err := db.Exec(o.DeleteQuery(), o.Key())
 	return err
+}
+
+func (db DBU) Find(o DBObject, keys QueryKeys) error {
+	where := make([]string, 0, len(keys))
+	what := make([]interface{}, 0, len(keys))
+	for k, v := range keys {
+		where = append(where, k+"=?")
+		what = append(what, v)
+	}
+	query := fmt.Sprintf("select * from %s where %s", o.TableName(), strings.Join(where, " and "))
+	return db.Get(o.MemberPointers(), query, what...)
 }
 
 // The only way to get access to the sqliteconn, which is needed to be able to generate
@@ -677,6 +692,25 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 		break
 	}
 	return toString(buff), err
+}
+
+func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Println("error on query: " + query + " -- " + err.Error())
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err = rows.Scan(members...)
+		if err != nil {
+			log.Println("scan error: " + err.Error())
+			log.Println("scan query: "+query+" args:", args)
+			return err
+		}
+		break
+	}
+	return nil
 }
 
 func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {

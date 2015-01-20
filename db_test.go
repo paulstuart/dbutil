@@ -22,6 +22,10 @@ type testStruct struct {
 	Created time.Time `sql:"created" update:"false"`
 }
 
+func (s *testStruct) TableName() string {
+	return "structs"
+}
+
 func (s *testStruct) InsertQuery() string {
 	return "insert into structs (name,kind,data) values(?,?,?)"
 }
@@ -36,6 +40,10 @@ func (s *testStruct) DeleteQuery() string {
 
 func (s *testStruct) UpdateValues() []interface{} {
 	return []interface{}{s.Name, s.Kind, s.Data, s.ID}
+}
+
+func (s *testStruct) MemberPointers() []interface{} {
+	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Created}
 }
 
 func (s *testStruct) InsertValues() []interface{} {
@@ -211,6 +219,12 @@ func TestDBObject(t *testing.T) {
 	if err := test_db.Save(s); err != nil {
 		t.Fatal(err)
 	}
+	z := testStruct{}
+	if err := test_db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Println("FOUND", z)
 	if err := test_db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
