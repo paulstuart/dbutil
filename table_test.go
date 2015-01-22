@@ -10,7 +10,7 @@ func TestHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	table.SetLinks(0, "/x/%s/%s", 0, 1)
-	for row := range table.HTML() {
+	for row := range table.HTMLRows() {
 		t.Log("ROW")
 		for col := range row.Columns() {
 			t.Log("COL", col)

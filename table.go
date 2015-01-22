@@ -29,6 +29,7 @@ type Table struct {
 	Adjust  []adjustment
 	SortCol int
 	Links   HTMLLinks
+	Hidden  map[int]struct{}
 }
 
 type HTMLRow struct {
@@ -36,7 +37,7 @@ type HTMLRow struct {
 	Row   int
 }
 
-func (t Table) HTML() <-chan HTMLRow {
+func (t Table) HTMLRows() <-chan HTMLRow {
 	ch := make(chan HTMLRow)
 	go func() {
 		for i := range t.Rows {
@@ -47,6 +48,20 @@ func (t Table) HTML() <-chan HTMLRow {
 	return ch
 }
 
+func (t Table) HTMLColumns() <-chan string {
+	ch := make(chan string)
+	go func() {
+		for i, col := range t.Columns {
+			if t.Visible(i) {
+				ch <- col
+			}
+		}
+		close(ch) // terminate loop
+	}()
+	return ch
+}
+
+// make html links on colun using format string and optional columns for data
 func (t *Table) SetLinks(column int, format string, columns ...int) {
 	if t.Links == nil {
 		t.Links = make(HTMLLinks)
@@ -54,11 +69,32 @@ func (t *Table) SetLinks(column int, format string, columns ...int) {
 	t.Links[column] = HTMLLink{format, columns}
 }
 
+// don't display these columns in html
+func (t *Table) Hide(columns ...int) {
+	if t.Hidden == nil {
+		t.Hidden = make(map[int]struct{})
+	}
+	for _, column := range columns {
+		t.Hidden[column] = struct{}{}
+	}
+}
+
+func (t *Table) Visible(column int) bool {
+	if t.Hidden == nil {
+		return true
+	}
+	_, hidden := t.Hidden[column]
+	return !hidden
+}
+
 func (r HTMLRow) Columns() <-chan template.HTML {
 	ch := make(chan template.HTML)
 	row := r.Table.Rows[r.Row]
 	go func() {
 		for i, col := range row {
+			if !r.Table.Visible(i) {
+				continue
+			}
 			if links, ok := r.Table.Links[i]; ok {
 				data := make([]interface{}, len(links.Columns))
 				for k, v := range links.Columns {
