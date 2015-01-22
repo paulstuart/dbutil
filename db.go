@@ -745,19 +745,20 @@ func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string
 	return
 }
 
-func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
+func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 	if db.Debug {
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
+	t := &Table{}
 	t.Columns, err = rows.Columns()
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	for rows.Next() {
@@ -772,7 +773,7 @@ func (db DBU) Table(query string, args ...interface{}) (t Table, err error) {
 		}
 		t.Rows = append(t.Rows, toString(row)) //final)
 	}
-	return
+	return t, nil
 }
 
 func (db DBU) Rows(Query string, args ...interface{}) (results []string, err error) {
@@ -878,8 +879,8 @@ func (db DBU) Stats() []string {
 	return stats
 }
 
-func (db DBU) Databases() (t Table) {
-	t, _ = db.Table("PRAGMA database_list")
+func (db DBU) Databases() *Table {
+	t, _ := db.Table("PRAGMA database_list")
 	return t
 }
 

@@ -18,7 +18,6 @@ type Row []string
 
 type HTMLLink struct {
 	Format  string
-	Target  int
 	Columns []int
 }
 
@@ -48,11 +47,11 @@ func (t Table) HTML() <-chan HTMLRow {
 	return ch
 }
 
-func (t *Table) SetLinks(column int, format string, target int, columns ...int) {
+func (t *Table) SetLinks(column int, format string, columns ...int) {
 	if t.Links == nil {
 		t.Links = make(HTMLLinks)
 	}
-	t.Links[column] = HTMLLink{format, target, columns}
+	t.Links[column] = HTMLLink{format, columns}
 }
 
 func (r HTMLRow) Columns() <-chan template.HTML {
@@ -66,7 +65,7 @@ func (r HTMLRow) Columns() <-chan template.HTML {
 					data[k] = row[v]
 				}
 				url := fmt.Sprintf(links.Format, data...)
-				ch <- template.HTML(fmt.Sprintf("<a href='%s'>%s</a>", url, row[links.Target]))
+				ch <- template.HTML(fmt.Sprintf("<a href='%s'>%s</a>", url, col))
 			} else {
 				ch <- template.HTML(col)
 			}
@@ -204,9 +203,9 @@ func (r Row) diff(prior Row, cols ...int) Row {
 
 // generate table containing differences, cols are columns
 // that are ignored but retained, e.g., timestamps
-func (t Table) Diff(reversed bool, cols ...string) Table {
+func (t *Table) Diff(reversed bool, cols ...string) *Table {
 	indx := indicies(t.Columns, cols...)
-	delta := Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
+	delta := &Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
 	last := Row{}
 	for i, row := range t.Rows {
 		if i > 0 {
