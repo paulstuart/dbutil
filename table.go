@@ -15,11 +15,64 @@ type adjustment struct {
 
 type Row []string
 
+type HTMLLink struct {
+	Format  string
+	Target  int
+	Columns []int
+}
+
+type HTMLLinks map[int]HTMLLink
+
 type Table struct {
 	Columns []string
 	Rows    []Row
 	Adjust  []adjustment
 	SortCol int
+	Links   HTMLLinks
+}
+
+type HTMLRow struct {
+	Table *Table
+	Row   int
+}
+
+func (t Table) HTML() <-chan HTMLRow {
+	ch := make(chan HTMLRow)
+	go func() {
+		for i := range t.Rows {
+			ch <- HTMLRow{Table: &t, Row: i}
+		}
+		close(ch) // terminate loop
+	}()
+	return ch
+}
+
+func (t *Table) SetLinks(column int, format string, target int, columns ...int) {
+	if t.Links == nil {
+		t.Links = make(HTMLLinks)
+	}
+	t.Links[column] = HTMLLink{format, target, columns}
+}
+
+func (r HTMLRow) Columns() <-chan string {
+	ch := make(chan string)
+	row := r.Table.Rows[r.Row]
+	go func() {
+		for i, col := range row {
+			if links, ok := r.Table.Links[i]; ok {
+				data := make([]interface{}, len(links.Columns))
+				for k, v := range links.Columns {
+					data[k] = row[v]
+				}
+				url := fmt.Sprintf(links.Format, data...)
+				ch <- fmt.Sprintf("<a href='%s'>%s</a>", url, row[links.Target])
+			} else {
+				ch <- col
+			}
+		}
+		close(ch) // terminate loop
+	}()
+	return ch
 }
 
 // for testing if last row in whilst in a template
