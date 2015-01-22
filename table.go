@@ -2,6 +2,7 @@ package dbutil
 
 import (
 	"fmt"
+	"html/template"
 	"io"
 	"os"
 	"strings"
@@ -54,8 +55,8 @@ func (t *Table) SetLinks(column int, format string, target int, columns ...int) 
 	t.Links[column] = HTMLLink{format, target, columns}
 }
 
-func (r HTMLRow) Columns() <-chan string {
-	ch := make(chan string)
+func (r HTMLRow) Columns() <-chan template.HTML {
+	ch := make(chan template.HTML)
 	row := r.Table.Rows[r.Row]
 	go func() {
 		for i, col := range row {
@@ -65,9 +66,9 @@ func (r HTMLRow) Columns() <-chan string {
 					data[k] = row[v]
 				}
 				url := fmt.Sprintf(links.Format, data...)
-				ch <- fmt.Sprintf("<a href='%s'>%s</a>", url, row[links.Target])
+				ch <- template.HTML(fmt.Sprintf("<a href='%s'>%s</a>", url, row[links.Target]))
 			} else {
-				ch <- col
+				ch <- template.HTML(col)
 			}
 		}
 		close(ch) // terminate loop
