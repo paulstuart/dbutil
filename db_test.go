@@ -26,6 +26,10 @@ func (s *testStruct) TableName() string {
 	return "structs"
 }
 
+func (s *testStruct) SelectFields() string {
+	return "id,name,kind,data,created"
+}
+
 func (s *testStruct) InsertQuery() string {
 	return "insert into structs (name,kind,data) values(?,?,?)"
 }
