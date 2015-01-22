@@ -47,6 +47,7 @@ type DBObject interface {
 	InsertQuery() string
 	UpdateQuery() string
 	DeleteQuery() string
+	SelectFields() string
 	InsertValues() []interface{}
 	UpdateValues() []interface{}
 	MemberPointers() []interface{}
@@ -77,12 +78,12 @@ func (db DBU) Find(o DBObject, keys QueryKeys) error {
 		where = append(where, k+"=?")
 		what = append(what, v)
 	}
-	query := fmt.Sprintf("select * from %s where %s", o.TableName(), strings.Join(where, " and "))
+	query := fmt.Sprintf("select %s from %s where %s", o.SelectFields(), o.TableName(), strings.Join(where, " and "))
 	return db.Get(o.MemberPointers(), query, what...)
 }
 
 func (db DBU) FindBy(o DBObject, key string, value interface{}) error {
-	query := fmt.Sprintf("select * from %s where %s=?", o.TableName(), key)
+	query := fmt.Sprintf("select %s from %s where %s=?", o.SelectFields(), o.TableName(), key)
 	return db.Get(o.MemberPointers(), query, value)
 }
 
