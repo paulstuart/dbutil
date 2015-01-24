@@ -23,18 +23,40 @@ type HTMLLink struct {
 
 type HTMLLinks map[int]HTMLLink
 
+type Sorted struct {
+	Column int
+	Decend bool
+}
+
+type RowType []int
+
 type Table struct {
-	Columns []string
-	Rows    []Row
-	Adjust  []adjustment
-	SortCol int
-	Links   HTMLLinks
-	Hidden  map[int]struct{}
+	Columns  []string
+	Rows     []Row
+	Adjust   []adjustment
+	Sorting  []Sorted
+	Links    HTMLLinks
+	Hidden   map[int]struct{}
+	Types    map[string]RowType
+	Selected []int
+}
+
+func (t *Table) AddSort(col int, decending bool) {
+	t.Sorting = append(t.Sorting, Sorted{col, decending})
 }
 
 type HTMLRow struct {
 	Table *Table
 	Row   int
+}
+
+func (r HTMLRow) Selected() bool {
+	for _, row := range r.Table.Selected {
+		if row == r.Row {
+			return true
+		}
+	}
+	return false
 }
 
 func (t Table) HTMLRows() <-chan HTMLRow {
@@ -67,6 +89,14 @@ func (t *Table) SetLinks(column int, format string, columns ...int) {
 		t.Links = make(HTMLLinks)
 	}
 	t.Links[column] = HTMLLink{format, columns}
+}
+
+func (t *Table) SetType(text string, columns ...int) {
+	if t.Types == nil {
+		//t.Types = make(map[string][]int)
+		t.Types = make(map[string]RowType)
+	}
+	t.Types[text] = columns
 }
 
 // don't display these columns in html
