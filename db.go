@@ -56,8 +56,12 @@ type DBObject interface {
 }
 
 func (db DBU) Add(o DBObject) error {
-	id, err := db.Insert(o.InsertQuery(), o.InsertValues()...)
-	o.SetID(id)
+	args := o.InsertValues()
+	result, err := db.Exec(o.InsertQuery(), args...)
+	if result != nil {
+		id, _ := result.LastInsertId()
+		o.SetID(id)
+	}
 	return err
 }
 
@@ -155,7 +159,12 @@ func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
 	}
 	query := fmt.Sprintf("insert into %s (%s) values (%s)", table, fields, Placeholders(len(a)))
-	return db.Insert(query, a...)
+	result, err := db.Exec(query, a...)
+	if result != nil {
+		id, _ := result.LastInsertId()
+		return id, err
+	}
+	return -1, err
 }
 
 func (db DBU) ObjectUpdate(obj interface{}) error {

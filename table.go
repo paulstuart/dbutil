@@ -28,8 +28,6 @@ type Sorted struct {
 	Decend bool
 }
 
-type RowType []int
-
 type Table struct {
 	Columns  []string
 	Rows     []Row
@@ -37,7 +35,7 @@ type Table struct {
 	Sorting  []Sorted
 	Links    HTMLLinks
 	Hidden   map[int]struct{}
-	Types    map[string]RowType
+	Types    map[string][]int
 	Selected []int
 }
 
@@ -93,8 +91,7 @@ func (t *Table) SetLinks(column int, format string, columns ...int) {
 
 func (t *Table) SetType(text string, columns ...int) {
 	if t.Types == nil {
-		//t.Types = make(map[string][]int)
-		t.Types = make(map[string]RowType)
+		t.Types = make(map[string][]int)
 	}
 	t.Types[text] = columns
 }
@@ -270,26 +267,28 @@ func (r Row) diff(prior Row, cols ...int) Row {
 // generate table containing differences, cols are columns
 // that are ignored but retained, e.g., timestamps
 func (t *Table) Diff(reversed bool, cols ...string) *Table {
-	indx := indicies(t.Columns, cols...)
 	delta := &Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
-	last := Row{}
-	for i, row := range t.Rows {
-		if i > 0 {
-			var diffs Row
-			if reversed {
-				diffs = last.diff(row, indx...)
-			} else {
-				diffs = row.diff(last, indx...)
-			}
-			pref := columns(last, indx...)
-			for c, diff := range diffs {
-				if len(diff) > 0 {
-					changed := append(pref, t.Columns[c], diff)
-					delta.Rows = append(delta.Rows, changed)
+	if t != nil {
+		indx := indicies(t.Columns, cols...)
+		last := Row{}
+		for i, row := range t.Rows {
+			if i > 0 {
+				var diffs Row
+				if reversed {
+					diffs = last.diff(row, indx...)
+				} else {
+					diffs = row.diff(last, indx...)
+				}
+				pref := columns(last, indx...)
+				for c, diff := range diffs {
+					if len(diff) > 0 {
+						changed := append(pref, t.Columns[c], diff)
+						delta.Rows = append(delta.Rows, changed)
+					}
 				}
 			}
+			last = row
 		}
-		last = row
 	}
 	return delta
 }
