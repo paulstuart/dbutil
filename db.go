@@ -34,6 +34,11 @@ var (
 	backupConn  *sqlite3.SQLiteConn
 )
 
+var (
+	ErrNoKeyField = errors.New("table has no key field")
+	ErrKeyMissing = errors.New("key is not set")
+)
+
 type DBU struct {
 	*sql.DB
 	fileName string
@@ -51,6 +56,7 @@ type DBObject interface {
 	InsertValues() []interface{}
 	UpdateValues() []interface{}
 	MemberPointers() []interface{}
+	KeyField() string
 	Key() int64
 	SetID(int64)
 }
@@ -92,6 +98,16 @@ func (db DBU) Find(o DBObject, keys QueryKeys) error {
 func (db DBU) FindBy(o DBObject, key string, value interface{}) error {
 	query := fmt.Sprintf("select %s from %s where %s=?", o.SelectFields(), o.TableName(), key)
 	return db.Get(o.MemberPointers(), query, value)
+}
+
+func (db DBU) FindSelf(o DBObject) error {
+	if len(o.KeyField()) == 0 {
+		return ErrNoKeyField
+	}
+	if o.Key() == 0 {
+		return ErrKeyMissing
+	}
+	return db.FindBy(o, o.KeyField(), o.Key())
 }
 
 // The only way to get access to the sqliteconn, which is needed to be able to generate
@@ -200,7 +216,7 @@ func (db DBU) ObjectUpdate(obj interface{}) error {
 		list = append(list, fmt.Sprintf("%s=?", k))
 	}
 	if len(key) == 0 {
-		return fmt.Errorf("No key specified for object table: %s", table)
+		return ErrNoKeyField
 	}
 	args = append(args, id)
 	query := fmt.Sprintf("update %s set %s where %s=?", table, strings.Join(list, ","), key)
@@ -212,7 +228,7 @@ func (db DBU) ObjectUpdate(obj interface{}) error {
 func (db DBU) ObjectDelete(obj interface{}) error {
 	table, key, id := deleteInfo(obj)
 	if len(key) == 0 {
-		return errors.New("No primary key for table: " + table)
+		return ErrNoKeyField
 	}
 	query := fmt.Sprintf("delete from %s where %s=?", table, key)
 	rec, err := db.Update(query, id)

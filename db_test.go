@@ -26,6 +26,10 @@ func (s *testStruct) TableName() string {
 	return "structs"
 }
 
+func (s *testStruct) KeyField() string {
+	return "id"
+}
+
 func (s *testStruct) SelectFields() string {
 	return "id,name,kind,data,created"
 }
@@ -223,6 +227,14 @@ func TestFindBy(t *testing.T) {
 	}
 	test_db.Debug = false
 	t.Log("BY ID", u)
+}
+
+func TestSelf(t *testing.T) {
+	s := testStruct{ID: 1}
+	if err := test_db.FindSelf(&s); err != nil {
+		t.Error(err)
+	}
+	t.Log("BY SELF", s)
 }
 
 func TestDBObject(t *testing.T) {
