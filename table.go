@@ -81,7 +81,7 @@ func (t Table) HTMLColumns() <-chan string {
 	return ch
 }
 
-// make html links on colun using format string and optional columns for data
+// make html links on column using format string and optional columns for data
 func (t *Table) SetLinks(column int, format string, columns ...int) {
 	if t.Links == nil {
 		t.Links = make(HTMLLinks)

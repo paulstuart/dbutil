@@ -55,6 +55,7 @@ type DBObject interface {
 	SetID(int64)
 }
 
+// Add new object to datastore
 func (db DBU) Add(o DBObject) error {
 	args := o.InsertValues()
 	result, err := db.Exec(o.InsertQuery(), args...)
@@ -65,11 +66,13 @@ func (db DBU) Add(o DBObject) error {
 	return err
 }
 
+// Save modified object in datastore
 func (db DBU) Save(o DBObject) error {
 	_, err := db.Update(o.UpdateQuery(), o.UpdateValues()...)
 	return err
 }
 
+// Delete object from datastore
 func (db DBU) Delete(o DBObject) error {
 	_, err := db.Exec(o.DeleteQuery(), o.Key())
 	return err
@@ -156,7 +159,7 @@ func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	_, a := objFields(obj, skip)
 	table, _, fields := dbFields(obj, skip)
 	if len(table) == 0 {
-		return -1, errors.New(fmt.Sprintf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields))
+		return -1, fmt.Errorf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields)
 	}
 	query := fmt.Sprintf("insert into %s (%s) values (%s)", table, fields, Placeholders(len(a)))
 	result, err := db.Exec(query, a...)
@@ -828,7 +831,7 @@ func (db DBU) File(file string) error {
 		if len(line) >= dbpref && dbread == line[:dbpref] {
 			err = db.File(line[dbpref:])
 			if err != nil {
-				fmt.Println("READ FILE:", line[dbpref:], "ERR:", err)
+				log.Println("READ FILE:", line[dbpref:], "ERR:", err)
 			}
 			continue
 		} else if startsWith(line, "CREATE TRIGGER") {
@@ -842,8 +845,10 @@ func (db DBU) File(file string) error {
 			continue
 		}
 		if _, err := db.Exec(line); err != nil {
-			fmt.Println("EXEC QUERY:", line, "\nFILE:", db.fileName, "\nERR:", err)
+			log.Println("EXEC QUERY:", line, "\nFILE:", db.fileName, "\nERR:", err)
 			return err
+		} else if db.Debug {
+			log.Println(os.Stderr, "QUERY:", line)
 		}
 	}
 	return nil
@@ -919,7 +924,7 @@ func (db DBU) Backup(to string) error {
 	}
 
 	for {
-		fmt.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		log.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
 		done, err := bk.Step(1024)
 		if err != nil {
 			return err
