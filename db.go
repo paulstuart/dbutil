@@ -49,22 +49,64 @@ type QueryKeys map[string]interface{}
 
 type DBObject interface {
 	TableName() string
-	InsertQuery() string
-	UpdateQuery() string
-	DeleteQuery() string
+	KeyField() string
 	SelectFields() string
+	InsertFields() string
+	Key() int64
+	SetID(int64)
 	InsertValues() []interface{}
 	UpdateValues() []interface{}
 	MemberPointers() []interface{}
-	KeyField() string
-	Key() int64
-	SetID(int64)
+}
+
+func setParams(params string) string {
+	list := strings.Split(params, ",")
+	for i, p := range list {
+		list[i] = fmt.Sprintf("%s=?", p)
+	}
+	return strings.Join(list, ",")
+}
+
+func SelectQuery(o DBObject) string {
+	return fmt.Sprintf("select %s from %s where %s=?", o.TableName(), o.SelectFields(), o.KeyField())
+}
+
+func InsertQuery(o DBObject) string {
+	p := Placeholders(len(o.InsertValues()))
+	return fmt.Sprintf("insert into %s (%s) values(%s)", o.TableName(), o.InsertFields(), p)
+}
+
+func ReplaceQuery(o DBObject) string {
+	p := Placeholders(len(o.InsertValues()))
+	return fmt.Sprintf("replace into %s (%s) values(%s)", o.TableName(), o.InsertFields(), p)
+}
+
+func UpdateQuery(o DBObject) string {
+	return fmt.Sprintf("update %s set %s where %s=?", o.TableName(), setParams(o.InsertFields()), o.KeyField())
+}
+
+func DeleteQuery(o DBObject) string {
+	return fmt.Sprintf("delete from %s where %s=?", o.TableName(), o.KeyField())
 }
 
 // Add new object to datastore
 func (db DBU) Add(o DBObject) error {
 	args := o.InsertValues()
-	result, err := db.Exec(o.InsertQuery(), args...)
+	if db.Debug {
+		fmt.Println("Q:", InsertQuery(o), "A:", args)
+	}
+	result, err := db.Exec(InsertQuery(o), args...)
+	if result != nil {
+		id, _ := result.LastInsertId()
+		o.SetID(id)
+	}
+	return err
+}
+
+// Add new or replace existing object in datastore
+func (db DBU) Replace(o DBObject) error {
+	args := o.InsertValues()
+	result, err := db.Exec(ReplaceQuery(o), args...)
 	if result != nil {
 		id, _ := result.LastInsertId()
 		o.SetID(id)
@@ -74,13 +116,13 @@ func (db DBU) Add(o DBObject) error {
 
 // Save modified object in datastore
 func (db DBU) Save(o DBObject) error {
-	_, err := db.Update(o.UpdateQuery(), o.UpdateValues()...)
+	_, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
 	return err
 }
 
 // Delete object from datastore
 func (db DBU) Delete(o DBObject) error {
-	_, err := db.Exec(o.DeleteQuery(), o.Key())
+	_, err := db.Exec(DeleteQuery(o), o.Key())
 	return err
 }
 
@@ -243,6 +285,7 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 
 // make slice of pointers to struct members for sql scanner
 // expects struct value as input
+
 func sPtrs(obj interface{}) []interface{} {
 	val := reflect.ValueOf(obj)
 	base := reflect.Indirect(val)
@@ -522,42 +565,6 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	err = row.Scan(dest...)
 	return
 }
-
-/*
-func SetSqlValue(obj interface{}, column, word string) error {
-	r := reflect.Indirect(reflect.ValueOf(obj)).Interface()
-	val := reflect.ValueOf(obj)
-	base := reflect.Indirect(val)
-	t := reflect.TypeOf(base.Interface())
-	for i := 0; i < base.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("sql")
-		if tag != column {
-			continue
-		}
-			f := base.Field(i)
-			data = append(data, f.Addr().Interface())
-		}
-	}
-}
-*/
-
-/* TODO: fix this!
-func (db DBU) ObjectLoadByID(reply interface{}) (err error) {
-    obj := reflect.Indirect(reflect.ValueOf(reply)).Interface()
-    query := createQuery(obj, false)
-    if len(extra) > 0 {
-        query += " " + extra
-    }
-    //fmt.Println("ObjectLoad Query:",Query)
-	if db.Debug {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
-	row := db.QueryRow(Query, args...)
-	dest := sPtrs(reply)
-	err = row.Scan(dest...)
-	return
-}
-*/
 
 func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(Kind)

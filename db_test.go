@@ -30,20 +30,12 @@ func (s *testStruct) KeyField() string {
 	return "id"
 }
 
+func (s *testStruct) InsertFields() string {
+	return "name,kind,data"
+}
+
 func (s *testStruct) SelectFields() string {
 	return "id,name,kind,data,created"
-}
-
-func (s *testStruct) InsertQuery() string {
-	return "insert into structs (name,kind,data) values(?,?,?)"
-}
-
-func (s *testStruct) UpdateQuery() string {
-	return "update structs set name=?,kind=?,data=? where id=?"
-}
-
-func (s *testStruct) DeleteQuery() string {
-	return "delete from structs where id=?"
 }
 
 func (s *testStruct) UpdateValues() []interface{} {
@@ -153,12 +145,11 @@ func TestSqliteString(t *testing.T) {
 	t.Log("NAME: ", name)
 }
 
-/*
 func TestSqliteTable(t *testing.T) {
+	t.Skip("Need a way to test tables in non verbose fashion")
 	table, _ := test_db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
 	table.Dumper(w, true)
 }
-*/
 
 func TestObjects(t *testing.T) {
 	_, err := test_db.Exec(struct_sql)
@@ -195,10 +186,6 @@ func TestObjects(t *testing.T) {
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: ", err)
 	}
-	/*
-	   test_db.Update("update structs set kind=? where id=?", 99, s1.ID)
-	   test_db.Update("update structs set name=? where id=?", "Master Update", s2.ID)
-	*/
 	s1.Kind = 99
 	err = test_db.ObjectUpdate(s1)
 	if err != nil {
@@ -225,7 +212,7 @@ func TestFindBy(t *testing.T) {
 	if err := test_db.FindBy(&u, "id", 1); err != nil {
 		t.Error(err)
 	}
-	test_db.Debug = false
+	//test_db.Debug = false
 	t.Log("BY ID", u)
 }
 
@@ -243,6 +230,7 @@ func TestDBObject(t *testing.T) {
 		Kind: 2001,
 		Data: []byte("lorem ipsum"),
 	}
+	//test_db.Debug = true
 	if err := test_db.Add(s); err != nil {
 		t.Fatal(err)
 	}
