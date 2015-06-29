@@ -2,6 +2,7 @@ package dbutil
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"testing/iotest"
@@ -14,12 +15,16 @@ var (
 	w         = iotest.NewWriteLogger("", os.Stderr)
 )
 
+func init() {
+	fmt.Println("INIT")
+}
+
 type testStruct struct {
 	ID      int64     `sql:"id" key:"true" table:"structs"`
 	Name    string    `sql:"name"`
 	Kind    int       `sql:"kind"`
 	Data    []byte    `sql:"data"`
-	Created time.Time `sql:"created" update:"false"`
+	Created time.Time //`sql:"created" update:"false"`
 }
 
 func (s *testStruct) TableName() string {
@@ -35,7 +40,8 @@ func (s *testStruct) InsertFields() string {
 }
 
 func (s *testStruct) SelectFields() string {
-	return "id,name,kind,data,created"
+	//return "id,name,kind,data,created"
+	return "id,name,kind,data"
 }
 
 func (s *testStruct) UpdateValues() []interface{} {
@@ -43,7 +49,8 @@ func (s *testStruct) UpdateValues() []interface{} {
 }
 
 func (s *testStruct) MemberPointers() []interface{} {
-	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Created}
+	//return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Created}
+	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data}
 }
 
 func (s *testStruct) InsertValues() []interface{} {
@@ -73,6 +80,7 @@ func init() {
 }
 
 func TestSqliteCreate(t *testing.T) {
+	fmt.Println("CREATE")
 	test_db, err := Open(test_file, true)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +220,6 @@ func TestFindBy(t *testing.T) {
 	if err := test_db.FindBy(&u, "id", 1); err != nil {
 		t.Error(err)
 	}
-	//test_db.Debug = false
 	t.Log("BY ID", u)
 }
 
@@ -230,7 +237,6 @@ func TestDBObject(t *testing.T) {
 		Kind: 2001,
 		Data: []byte("lorem ipsum"),
 	}
-	//test_db.Debug = true
 	if err := test_db.Add(s); err != nil {
 		t.Fatal(err)
 	}
@@ -243,8 +249,8 @@ func TestDBObject(t *testing.T) {
 	if err := test_db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
 		t.Fatal(err)
 	}
-
 	t.Log("FOUND", z)
+
 	if err := test_db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +291,63 @@ func TestStreamTab(t *testing.T) {
 	t.Log("\nTAB:")
 	err := test_db.StreamTab(os.Stdout, query)
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamJSON(t *testing.T) {
+	query := "select id,name,kind from structs"
+	err := test_db.StreamJSON(os.Stdout, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamObject(t *testing.T) {
+	err := test_db.StreamObjects(os.Stdout, &testStruct{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func numbChk(t *testing.T, s string) {
+	t.Log(s, isNumber(s))
+}
+
+func TestIsNumb(t *testing.T) {
+	numbChk(t, "10")
+	numbChk(t, "10x")
+	numbChk(t, "x10")
+	numbChk(t, "10.1")
+	numbChk(t, "10.1.2.3")
+	numbChk(t, "1way")
+	numbChk(t, "10 ")
+	numbChk(t, " 1 ")
+}
+
+func TestDBObject(t *testing.T) {
+	s := &testStruct{
+		Name: "What ev er",
+		Kind: 1986,
+		Data: []byte("just a test"),
+	}
+	if err := test_db.Add(s); err != nil {
+		t.Fatal(err)
+	}
+	v := &testStruct{}
+
+	s.Kind = 2015
+	s.Name = "Void droid"
+	if err := test_db.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	z := testStruct{}
+	if err := test_db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("FOUND", z)
+
+	if err := test_db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
 }

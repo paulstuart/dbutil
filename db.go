@@ -32,6 +32,7 @@ var (
 	readline    = regexp.MustCompile(`(\.read \S+)`)
 	activeConn  *sqlite3.SQLiteConn
 	backupConn  *sqlite3.SQLiteConn
+	numeric, _  = regexp.Compile("^[0-9]+(\\.[0-9])?$")
 )
 
 var (
@@ -51,7 +52,6 @@ type DBObject interface {
 	TableName() string
 	KeyField() string
 	SelectFields() string
-	InsertFields() string
 	Key() int64
 	SetID(int64)
 	InsertValues() []interface{}
@@ -67,22 +67,33 @@ func setParams(params string) string {
 	return strings.Join(list, ",")
 }
 
+func InsertFields(o DBObject) string {
+	list := strings.Split(o.SelectFields(), ",")
+	keep := make([]string, 0, len(list))
+	for _, p := range list {
+		if p != o.KeyField() {
+			keep = append(keep, p)
+		}
+	}
+	return strings.Join(keep, ",")
+}
+
 func SelectQuery(o DBObject) string {
-	return fmt.Sprintf("select %s from %s where %s=?", o.TableName(), o.SelectFields(), o.KeyField())
+	return fmt.Sprintf("select %s from %s where %s=?", o.SelectFields(), o.TableName(), o.KeyField())
 }
 
 func InsertQuery(o DBObject) string {
 	p := Placeholders(len(o.InsertValues()))
-	return fmt.Sprintf("insert into %s (%s) values(%s)", o.TableName(), o.InsertFields(), p)
+	return fmt.Sprintf("insert into %s (%s) values(%s)", o.TableName(), InsertFields(o), p)
 }
 
 func ReplaceQuery(o DBObject) string {
 	p := Placeholders(len(o.InsertValues()))
-	return fmt.Sprintf("replace into %s (%s) values(%s)", o.TableName(), o.InsertFields(), p)
+	return fmt.Sprintf("replace into %s (%s) values(%s)", o.TableName(), InsertFields(o), p)
 }
 
 func UpdateQuery(o DBObject) string {
-	return fmt.Sprintf("update %s set %s where %s=?", o.TableName(), setParams(o.InsertFields()), o.KeyField())
+	return fmt.Sprintf("update %s set %s where %s=?", o.TableName(), setParams(InsertFields(o)), o.KeyField())
 }
 
 func DeleteQuery(o DBObject) string {
@@ -636,6 +647,40 @@ func (db DBU) StreamTab(w io.Writer, query string, args ...interface{}) error {
 		fmt.Fprintln(w, strings.Join(rawStrings(buffer), "\t"))
 	}
 	return db.Stream(fn, query, args...)
+}
+
+func isNumber(s string) bool {
+	return numeric.Match([]byte(strings.TrimSpace(s)))
+}
+
+func (db DBU) StreamJSON(w io.Writer, query string, args ...interface{}) error {
+	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+		if count > 0 {
+			fmt.Fprintln(w, ",")
+		}
+		fmt.Fprintln(w, "  {")
+		for i, s := range rawStrings(buffer) {
+			comma := ",\n"
+			if i >= len(buffer)-1 {
+				comma = "\n"
+			}
+			if isNumber(s) {
+				fmt.Fprintf(w, `    "%s": %s%s`, columns[i], s, comma)
+			} else {
+				s = strings.Replace(s, `"`, `\"`, -1)
+				fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
+			}
+		}
+		fmt.Fprint(w, "  }")
+	}
+	fmt.Fprintln(w, "[")
+	defer fmt.Fprintln(w, "\n]")
+	return db.Stream(fn, query, args...)
+}
+
+func (db DBU) StreamObjects(w io.Writer, o DBObject) error {
+	query := fmt.Sprintf("select %s from %s", o.SelectFields(), o.TableName())
+	return db.StreamJSON(w, query)
 }
 
 func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{}) (interface{}, error) {
