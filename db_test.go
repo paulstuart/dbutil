@@ -325,33 +325,6 @@ func TestIsNumb(t *testing.T) {
 	numbChk(t, " 1 ")
 }
 
-func TestDBObject(t *testing.T) {
-	s := &testStruct{
-		Name: "What ev er",
-		Kind: 1986,
-		Data: []byte("just a test"),
-	}
-	if err := test_db.Add(s); err != nil {
-		t.Fatal(err)
-	}
-	v := &testStruct{}
-
-	s.Kind = 2015
-	s.Name = "Void droid"
-	if err := test_db.Save(s); err != nil {
-		t.Fatal(err)
-	}
-	z := testStruct{}
-	if err := test_db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
-		t.Fatal(err)
-	}
-	t.Log("FOUND", z)
-
-	if err := test_db.Delete(s); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestBackup(t *testing.T) {
 	err := test_db.Backup("test_backup.db")
 	if err != nil {

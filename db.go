@@ -2,6 +2,7 @@ package dbutil
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -10,10 +11,12 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
@@ -30,9 +33,8 @@ var (
 	c_comment   = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	sql_comment = regexp.MustCompile(`\s*--.*`)
 	readline    = regexp.MustCompile(`(\.read \S+)`)
-	activeConn  *sqlite3.SQLiteConn
-	backupConn  *sqlite3.SQLiteConn
 	numeric, _  = regexp.Compile("^[0-9]+(\\.[0-9])?$")
+	registry    = make(map[string]*sqlite3.SQLiteConn)
 )
 
 var (
@@ -172,10 +174,61 @@ func init() {
 	sql.Register("s3",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				activeConn = conn
+				t, err := qRows(conn, "PRAGMA database_list")
+				if err == nil {
+					if len(t.Rows) > 0 && len(t.Rows[0]) > 2 {
+						file := t.Rows[0][2]
+						m := sync.Mutex{}
+						m.Lock()
+						registry[file] = conn
+						m.Unlock()
+					}
+				} else {
+					fmt.Println("Q ERR:", err)
+				}
+
 				return nil
 			},
 		})
+}
+
+func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table, error) {
+	t := Table{}
+	rows, err := conn.Query(query, args)
+	if err != nil {
+		return t, err
+	}
+	t.Columns = rows.Columns()
+	buffer := make([]sql.RawBytes, len(t.Columns))
+	dest := make([]driver.Value, len(buffer))
+	for i := 0; i < len(buffer); i++ {
+		dest[i] = &buffer[i]
+	}
+	cnt := 0
+	for {
+		err := rows.Next(dest)
+		if err != nil {
+			if err != io.EOF {
+				return t, err
+			}
+			break
+		}
+		t.Rows = append(t.Rows, make(Row, len(buffer)))
+		for i, d := range dest {
+			switch d := d.(type) {
+			case []uint8:
+				t.Rows[cnt][i] = string(d)
+			case string:
+				fmt.Println("*** S D:", d)
+			case int64:
+				t.Rows[cnt][i] = fmt.Sprint(d)
+			default:
+				fmt.Printf("unexpected type %T", d)
+			}
+		}
+		cnt++
+	}
+	return t, nil
 }
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
@@ -966,26 +1019,32 @@ func (db DBU) Databases() *Table {
 	return t
 }
 
-func init() {
-	sql.Register("backup",
-		&sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				backupConn = conn
-				return nil
-			},
-		})
-}
-
 func (db DBU) Backup(to string) error {
 	os.Remove(to)
 
-	destDb, err := sql.Open("backup", to)
+	destDb, err := sql.Open("s3", to)
 	if err != nil {
 		return err
 	}
 	defer destDb.Close()
 	destDb.Ping()
 
+	file, err := filepath.Abs(db.fileName)
+	if err != nil {
+		return err
+	}
+	activeConn, ok := registry[file]
+	if !ok {
+		return fmt.Errorf("no connection found for file:", db.fileName)
+	}
+	file, err = filepath.Abs(to)
+	if err != nil {
+		return err
+	}
+	backupConn, ok := registry[file]
+	if !ok {
+		return fmt.Errorf("no connection found for file:", to)
+	}
 	bk, err := backupConn.Backup("main", activeConn, "main")
 	if err != nil {
 		return err
