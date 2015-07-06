@@ -231,6 +231,14 @@ func TestSelf(t *testing.T) {
 	t.Log("BY SELF", s)
 }
 
+func TestVersionPre(t *testing.T) {
+	v, err := test_db.Version()
+	if err != nil {
+		t.Error(err)
+	}
+	t.Log("VERSION PRE:", v)
+}
+
 func TestDBObject(t *testing.T) {
 	s := &testStruct{
 		Name: "Grammatic, Bro",
@@ -254,6 +262,14 @@ func TestDBObject(t *testing.T) {
 	if err := test_db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestVersionPost(t *testing.T) {
+	v, err := test_db.Version()
+	if err != nil {
+		t.Error(err)
+	}
+	t.Log("VERSION POST:", v)
 }
 
 func TestLoadMap(t *testing.T) {

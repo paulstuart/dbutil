@@ -1076,3 +1076,20 @@ func Constrained(err error) (table, column string) {
 	}
 	return
 }
+
+func (db DBU) Version() (uint64, error) {
+	f, err := os.Open(db.fileName)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	b := make([]byte, 4)
+	f.ReadAt(b, 24)
+
+	var a uint64
+	a += uint64(b[0]) << 24
+	a += uint64(b[1]) << 16
+	a += uint64(b[2]) << 8
+	a += uint64(b[3])
+	return a, nil
+}
