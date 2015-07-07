@@ -2,7 +2,6 @@ package dbutil
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 	"testing"
 	"testing/iotest"
@@ -14,10 +13,6 @@ var (
 	test_file = "test.db"
 	w         = iotest.NewWriteLogger("", os.Stderr)
 )
-
-func init() {
-	fmt.Println("INIT")
-}
 
 type testStruct struct {
 	ID      int64     `sql:"id" key:"true" table:"structs"`
@@ -80,7 +75,6 @@ func init() {
 }
 
 func TestSqliteCreate(t *testing.T) {
-	fmt.Println("CREATE")
 	test_db, err := Open(test_file, true)
 	if err != nil {
 		t.Fatal(err)
@@ -342,8 +336,16 @@ func TestIsNumb(t *testing.T) {
 }
 
 func TestBackup(t *testing.T) {
+	v, _ := test_db.Version()
+	t.Log("Version prior to backup:", v)
+	t.Log("Backed up:", test_db.BackedUp)
+	t.Log("Changed prior to backup:", test_db.Changed())
 	err := test_db.Backup("test_backup.db")
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("Changed post backup:", test_db.Changed())
+	v, _ = DBVersion("test.db")
+	t.Log("Version of backup:", v)
+	t.Log("Backed up:", test_db.BackedUp)
 }

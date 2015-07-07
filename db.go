@@ -46,6 +46,7 @@ type DBU struct {
 	*sql.DB
 	fileName string
 	Debug    bool
+	BackedUp uint64
 }
 
 type QueryKeys map[string]interface{}
@@ -234,7 +235,7 @@ func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table,
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
 func Open(file string, init bool) (DBU, error) {
-	dbu := DBU{nil, file, false}
+	dbu := DBU{nil, file, false, 0}
 	if init {
 		os.Mkdir(path.Dir(file), 0777)
 		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
@@ -1019,9 +1020,10 @@ func (db DBU) Databases() *Table {
 	return t
 }
 
-func (db DBU) Backup(to string) error {
+func (db *DBU) Backup(to string) error {
 	os.Remove(to)
 
+	v, _ := db.Version()
 	destDb, err := sql.Open("s3", to)
 	if err != nil {
 		return err
@@ -1061,7 +1063,13 @@ func (db DBU) Backup(to string) error {
 		}
 	}
 	bk.Finish()
-	return nil
+	db.BackedUp = v
+	return err
+}
+
+func (db DBU) Changed() bool {
+	v, _ := db.Version()
+	return v != db.BackedUp
 }
 
 func Constrained(err error) (table, column string) {
@@ -1077,8 +1085,8 @@ func Constrained(err error) (table, column string) {
 	return
 }
 
-func (db DBU) Version() (uint64, error) {
-	f, err := os.Open(db.fileName)
+func DBVersion(file string) (uint64, error) {
+	f, err := os.Open(file)
 	if err != nil {
 		return 0, err
 	}
@@ -1092,4 +1100,8 @@ func (db DBU) Version() (uint64, error) {
 	a += uint64(b[2]) << 8
 	a += uint64(b[3])
 	return a, nil
+}
+
+func (db DBU) Version() (uint64, error) {
+	return DBVersion(db.fileName)
 }
