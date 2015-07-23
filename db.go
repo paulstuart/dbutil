@@ -1053,7 +1053,9 @@ func (db *DBU) Backup(to string) error {
 	}
 
 	for {
-		log.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		if db.Debug {
+			log.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		}
 		done, err := bk.Step(1024)
 		if err != nil {
 			return err
