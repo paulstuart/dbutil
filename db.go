@@ -40,6 +40,7 @@ var (
 var (
 	ErrNoKeyField = errors.New("table has no key field")
 	ErrKeyMissing = errors.New("key is not set")
+	ErrNoRows     = errors.New("no rows found")
 )
 
 type DBU struct {
@@ -107,7 +108,7 @@ func DeleteQuery(o DBObject) string {
 func (db DBU) Add(o DBObject) error {
 	args := o.InsertValues()
 	if db.Debug {
-		fmt.Println("Q:", InsertQuery(o), "A:", args)
+		log.Println("Q:", InsertQuery(o), "A:", args)
 	}
 	result, err := db.Exec(InsertQuery(o), args...)
 	if result != nil {
@@ -136,6 +137,9 @@ func (db DBU) Save(o DBObject) error {
 
 // Delete object from datastore
 func (db DBU) Delete(o DBObject) error {
+	if db.Debug {
+		log.Println("Q:", DeleteQuery(o), "A:", o.Key())
+	}
 	_, err := db.Exec(DeleteQuery(o), o.Key())
 	return err
 }
@@ -185,7 +189,7 @@ func init() {
 						m.Unlock()
 					}
 				} else {
-					fmt.Println("Q ERR:", err)
+					log.Println("Q ERR:", err)
 				}
 
 				return nil
@@ -220,11 +224,10 @@ func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table,
 			case []uint8:
 				t.Rows[cnt][i] = string(d)
 			case string:
-				fmt.Println("*** S D:", d)
 			case int64:
 				t.Rows[cnt][i] = fmt.Sprint(d)
 			default:
-				fmt.Printf("unexpected type %T", d)
+				log.Printf("unexpected type %T", d)
 			}
 		}
 		cnt++
@@ -585,9 +588,9 @@ func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, er
 func (db DBU) Print(Query string, args ...interface{}) {
 	s, err := db.GetString(Query, args...)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		log.Println("ERROR:", err)
 	} else {
-		fmt.Println(s)
+		log.Println(s)
 	}
 }
 
@@ -807,7 +810,7 @@ func toString(in []interface{}) []string {
 		case time.Time:
 			s = col.(time.Time).String()
 		default:
-			fmt.Println("unhandled type:", t.(string))
+			log.Println("unhandled type:", t.(string))
 		}
 		out = append(out, s)
 	}
@@ -815,10 +818,9 @@ func toString(in []interface{}) []string {
 }
 
 func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
-	var reply []string
 	rows, err := db.Query(Query, args...)
 	if err != nil {
-		return reply, err
+		return []string{}, err
 	}
 	defer rows.Close()
 	cols, _ := rows.Columns()
@@ -829,9 +831,9 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 			dest[i] = &(buff[i])
 		}
 		err = rows.Scan(dest...)
-		break
+		return toString(buff), err
 	}
-	return toString(buff), err
+	return []string{}, ErrNoRows
 }
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
@@ -903,7 +905,7 @@ func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 		}
 		err = rows.Scan(dest...)
 		if err != nil {
-			fmt.Println("SCAN ERROR: ", err, "QUERY:", query)
+			log.Println("SCAN ERROR: ", err, "QUERY:", query)
 		}
 		t.Rows = append(t.Rows, toString(row)) //final)
 	}
@@ -921,7 +923,7 @@ func (db DBU) Rows(Query string, args ...interface{}) (results []string, err err
 		var dest string
 		err = rows.Scan(&dest)
 		if err != nil {
-			fmt.Println("SCAN ERR:", err, "QUERY:", Query)
+			log.Println("SCAN ERR:", err, "QUERY:", Query)
 			return
 		}
 		results = append(results, dest)
