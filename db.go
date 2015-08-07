@@ -55,12 +55,15 @@ type QueryKeys map[string]interface{}
 type DBObject interface {
 	TableName() string
 	KeyField() string
+	KeyName() string
 	SelectFields() string
+	InsertFields() string
 	Key() int64
 	SetID(int64)
 	InsertValues() []interface{}
 	UpdateValues() []interface{}
 	MemberPointers() []interface{}
+	ModifiedBy(int64, time.Time)
 }
 
 func setParams(params string) string {
@@ -72,7 +75,7 @@ func setParams(params string) string {
 }
 
 func InsertFields(o DBObject) string {
-	list := strings.Split(o.SelectFields(), ",")
+	list := strings.Split(o.InsertFields(), ",")
 	keep := make([]string, 0, len(list))
 	for _, p := range list {
 		if p != o.KeyField() {
@@ -160,6 +163,10 @@ func (db DBU) FindBy(o DBObject, key string, value interface{}) error {
 	return db.Get(o.MemberPointers(), query, value)
 }
 
+func (db DBU) FindByID(o DBObject, value interface{}) error {
+	return db.FindBy(o, o.KeyField(), value)
+}
+
 func (db DBU) FindSelf(o DBObject) error {
 	if len(o.KeyField()) == 0 {
 		return ErrNoKeyField
@@ -204,7 +211,7 @@ func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table,
 		return t, err
 	}
 	t.Columns = rows.Columns()
-	buffer := make([]sql.RawBytes, len(t.Columns))
+	buffer := make([]interface{}, len(t.Columns))
 	dest := make([]driver.Value, len(buffer))
 	for i := 0; i < len(buffer); i++ {
 		dest[i] = &buffer[i]
@@ -650,7 +657,7 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 	return err, s2.Interface()
 }
 
-func (db DBU) Stream(fn func([]string, int, []sql.RawBytes), query string, args ...interface{}) error {
+func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args ...interface{}) error {
 	if db.Debug {
 		fmt.Fprintln(os.Stderr, "STREAM QUERY:", query, "ARGS:", args)
 	}
@@ -662,7 +669,7 @@ func (db DBU) Stream(fn func([]string, int, []sql.RawBytes), query string, args 
 	if err != nil {
 		return err
 	}
-	buffer := make([]sql.RawBytes, len(columns))
+	buffer := make([]interface{}, len(columns))
 	dest := make([]interface{}, len(columns))
 	for i := 0; i < len(buffer); i++ {
 		dest[i] = &buffer[i]
@@ -670,38 +677,33 @@ func (db DBU) Stream(fn func([]string, int, []sql.RawBytes), query string, args 
 	i := 0
 	for rows.Next() {
 		err = rows.Scan(dest...)
+		if err != nil {
+			fmt.Println("BAD SCAN:", rows)
+		}
 		fn(columns, i, buffer)
 		i++
 	}
 	return err
 }
 
-func rawStrings(raw []sql.RawBytes) []string {
-	s := make([]string, len(raw))
-	for i, v := range raw {
-		s[i] = string(v)
-	}
-	return s
-}
-
 func (db DBU) StreamCSV(w io.Writer, query string, args ...interface{}) error {
 	cw := csv.NewWriter(w)
-	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+	fn := func(columns []string, count int, buffer []interface{}) {
 		if count == 0 {
 			cw.Write(columns)
 		}
-		cw.Write(rawStrings(buffer))
+		cw.Write(toString(buffer))
 	}
 	defer cw.Flush()
 	return db.Stream(fn, query, args...)
 }
 
 func (db DBU) StreamTab(w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+	fn := func(columns []string, count int, buffer []interface{}) {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
-		fmt.Fprintln(w, strings.Join(rawStrings(buffer), "\t"))
+		fmt.Fprintln(w, strings.Join(toString(buffer), "\t"))
 	}
 	return db.Stream(fn, query, args...)
 }
@@ -711,12 +713,12 @@ func isNumber(s string) bool {
 }
 
 func (db DBU) StreamJSON(w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []sql.RawBytes) {
+	fn := func(columns []string, count int, buffer []interface{}) {
 		if count > 0 {
 			fmt.Fprintln(w, ",")
 		}
 		fmt.Fprintln(w, "  {")
-		for i, s := range rawStrings(buffer) {
+		for i, s := range toString(buffer) {
 			comma := ",\n"
 			if i >= len(buffer)-1 {
 				comma = "\n"
@@ -809,6 +811,8 @@ func toString(in []interface{}) []string {
 			s = strconv.FormatInt(col.(int64), 10)
 		case time.Time:
 			s = col.(time.Time).String()
+		case sql.RawBytes:
+			s = string(t)
 		default:
 			log.Println("unhandled type:", t.(string))
 		}

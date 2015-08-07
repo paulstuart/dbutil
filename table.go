@@ -31,7 +31,6 @@ type Sorted struct {
 type Table struct {
 	Columns  []string
 	Rows     []Row
-	Adjust   []adjustment
 	Sorting  []Sorted
 	Links    HTMLLinks
 	Hidden   map[int]struct{}
@@ -41,6 +40,15 @@ type Table struct {
 
 func (t *Table) AddSort(col int, decending bool) {
 	t.Sorting = append(t.Sorting, Sorted{col, decending})
+}
+
+// reformat as specified
+func (t *Table) Adjustment(filter func(string) string, columns ...int) {
+	for _, col := range columns {
+		for i := range t.Rows {
+			t.Rows[i][col] = filter(t.Rows[i][col])
+		}
+	}
 }
 
 type HTMLRow struct {
@@ -160,12 +168,6 @@ func reverse(s []string) {
 
 func (t Table) Dumper(h io.Writer, header bool) {
 	w := new(tabwriter.Writer)
-	// reformat as specified
-	for _, a := range t.Adjust {
-		for i := range t.Rows {
-			t.Rows[i][a.index] = a.filter(t.Rows[i][a.index])
-		}
-	}
 	// Format in tab-separated columns with a tab stop of 8.
 	if nil == h {
 		h = os.Stdout

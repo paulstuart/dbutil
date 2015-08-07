@@ -1,7 +1,6 @@
 package dbutil
 
 import (
-	"database/sql"
 	"os"
 	"testing"
 	"testing/iotest"
@@ -15,11 +14,11 @@ var (
 )
 
 type testStruct struct {
-	ID      int64     `sql:"id" key:"true" table:"structs"`
-	Name    string    `sql:"name"`
-	Kind    int       `sql:"kind"`
-	Data    []byte    `sql:"data"`
-	Created time.Time //`sql:"created" update:"false"`
+	ID       int64     `sql:"id" key:"true" table:"structs"`
+	Name     string    `sql:"name"`
+	Kind     int       `sql:"kind"`
+	Data     []byte    `sql:"data"`
+	Modified time.Time `sql:"modified" update:"false"`
 }
 
 func (s *testStruct) TableName() string {
@@ -30,13 +29,16 @@ func (s *testStruct) KeyField() string {
 	return "id"
 }
 
+func (s *testStruct) KeyName() string {
+	return "ID"
+}
+
 func (s *testStruct) InsertFields() string {
 	return "name,kind,data"
 }
 
 func (s *testStruct) SelectFields() string {
-	//return "id,name,kind,data,created"
-	return "id,name,kind,data"
+	return "id,name,kind,data,modified"
 }
 
 func (s *testStruct) UpdateValues() []interface{} {
@@ -44,8 +46,7 @@ func (s *testStruct) UpdateValues() []interface{} {
 }
 
 func (s *testStruct) MemberPointers() []interface{} {
-	//return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Created}
-	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data}
+	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Modified}
 }
 
 func (s *testStruct) InsertValues() []interface{} {
@@ -60,12 +61,16 @@ func (s *testStruct) Key() int64 {
 	return s.ID
 }
 
+func (s *testStruct) ModifiedBy(u int64, t time.Time) {
+	s.Modified = t
+}
+
 const struct_sql = `create table structs (
         id integer not null primary key,
         name text,
         kind int,
         data blob,
-        created     DATETIME DEFAULT CURRENT_TIMESTAMP
+        modified   DATETIME DEFAULT CURRENT_TIMESTAMP
     );`
 
 type testMap map[int64]testStruct
@@ -159,30 +164,30 @@ func TestObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	s1 := testStruct{
-		Name:    "Bobby Tables",
-		Kind:    23,
-		Data:    []byte("binary data"),
-		Created: time.Now(),
+		Name:     "Bobby Tables",
+		Kind:     23,
+		Data:     []byte("binary data"),
+		Modified: time.Now(),
 	}
 	s1.ID, err = test_db.ObjectInsert(s1)
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: ", err)
 	}
 	s2 := testStruct{
-		Name:    "Master Blaster",
-		Kind:    999,
-		Data:    []byte("whatever you like"),
-		Created: time.Now(),
+		Name:     "Master Blaster",
+		Kind:     999,
+		Data:     []byte("whatever you like"),
+		Modified: time.Now(),
 	}
 	s2.ID, err = test_db.ObjectInsert(s2)
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: ", err)
 	}
 	s3 := testStruct{
-		Name:    "A, Keeper",
-		Kind:    123,
-		Data:    []byte("stick around"),
-		Created: time.Now(),
+		Name:     "A, Keeper",
+		Kind:     123,
+		Data:     []byte("stick around"),
+		Modified: time.Now(),
 	}
 	s3.ID, err = test_db.ObjectInsert(s3)
 	if err != nil {
@@ -274,13 +279,13 @@ func TestLoadMap(t *testing.T) {
 }
 
 func TestStream(t *testing.T) {
-	myStream := func(columns []string, count int, buffer []sql.RawBytes) {
+	myStream := func(columns []string, count int, buffer []interface{}) {
 		t.Log("STREAM COLS:", columns)
-		for _, b := range buffer {
-			t.Log("STREAM V:", string(b))
+		for _, b := range toString(buffer) {
+			t.Log("STREAM V:", b)
 		}
 	}
-	query := "select id,name,kind from structs"
+	query := "select id,name,kind,modified from structs"
 	err := test_db.Stream(myStream, query)
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +319,8 @@ func TestStreamJSON(t *testing.T) {
 }
 
 func TestStreamObject(t *testing.T) {
-	err := test_db.StreamObjects(os.Stdout, &testStruct{})
+	s := &testStruct{Modified: time.Now()}
+	err := test_db.StreamObjects(os.Stdout, s)
 	if err != nil {
 		t.Fatal(err)
 	}
