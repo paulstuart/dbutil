@@ -29,6 +29,7 @@ type Sorted struct {
 }
 
 type Table struct {
+	Name     string
 	Columns  []string
 	Rows     []Row
 	Sorting  []Sorted

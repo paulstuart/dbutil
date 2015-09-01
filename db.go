@@ -134,7 +134,10 @@ func (db DBU) Replace(o DBObject) error {
 
 // Save modified object in datastore
 func (db DBU) Save(o DBObject) error {
-	_, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
+	id, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
+	if err == nil {
+		o.SetID(id)
+	}
 	return err
 }
 
@@ -857,9 +860,9 @@ func (db DBU) Get(members []interface{}, query string, args ...interface{}) erro
 			log.Println("scan query: "+query+" args:", args)
 			return err
 		}
-		break
+		return nil
 	}
-	return nil
+	return ErrNoRows
 }
 
 func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
