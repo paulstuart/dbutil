@@ -28,12 +28,15 @@ type Sorted struct {
 	Decend bool
 }
 
+type LinkFunc func(string) bool
+
 type Table struct {
 	Name     string
 	Columns  []string
 	Rows     []Row
 	Sorting  []Sorted
 	Links    HTMLLinks
+	Filters  map[int]LinkFunc
 	Hidden   map[int]struct{}
 	Types    map[string][]int
 	Selected []int
@@ -98,6 +101,19 @@ func (t *Table) SetLinks(column int, format string, columns ...int) {
 	t.Links[column] = HTMLLink{format, columns}
 }
 
+// make html links on column using format string and optional columns for data
+// the 'check' function is applied to the 'column' contents
+func (t *Table) SetLinksWhen(check LinkFunc, column int, format string, columns ...int) {
+	if t.Links == nil {
+		t.Links = make(HTMLLinks)
+	}
+	if t.Filters == nil {
+		t.Filters = make(map[int]LinkFunc)
+	}
+	t.Links[column] = HTMLLink{format, columns}
+	t.Filters[column] = check
+}
+
 func (t *Table) SetType(text string, columns ...int) {
 	if t.Types == nil {
 		t.Types = make(map[string][]int)
@@ -132,6 +148,12 @@ func (r HTMLRow) Columns() <-chan template.HTML {
 				continue
 			}
 			if links, ok := r.Table.Links[i]; ok {
+				if fn, ok := r.Table.Filters[i]; ok {
+					if !fn(col) {
+						ch <- template.HTML(col)
+						continue
+					}
+				}
 				data := make([]interface{}, len(links.Columns))
 				for k, v := range links.Columns {
 					data[k] = row[v]

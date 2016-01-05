@@ -920,6 +920,9 @@ func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 }
 
 func (db DBU) Rows(Query string, args ...interface{}) (results []string, err error) {
+	if db.Debug {
+		log.Println("Q:", Query, "A:", args)
+	}
 	rows, err := db.Query(Query, args...)
 	if err != nil {
 		return
