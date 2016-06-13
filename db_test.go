@@ -1,6 +1,8 @@
 package dbutil
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"testing/iotest"
@@ -77,6 +79,34 @@ type testMap map[int64]testStruct
 
 func init() {
 	os.Remove(test_file)
+}
+
+func TestFuncs(t *testing.T) {
+	fmt.Println("FUNCS!")
+	t.Log("FUNCS!")
+	//db, err := sql.Open("s3", ":memory:")
+	db, err := sql.Open("s3", "test.db")
+
+	const create = `create table if not exists iptest ( ip int )`
+	const ins = `
+insert into iptest values(fromIPv4('127.0.0.1'));
+insert into iptest values(fromIPv4('192.168.1.1'));
+`
+	_, err = db.Exec(create)
+	if err != nil {
+		t.Log("%q: %s\n", err, create)
+		return
+	}
+	i, err := db.Exec(ins)
+	t.Log("INSERT:", i)
+	if err != nil {
+		t.Log("%q: %s\n", err, ins)
+		return
+	}
+	var ip int64
+	var ipv4 string
+	dump(t, db, "select * from iptest", ip)
+	dump(t, db, "select toIPv4(ip) as ipv4 from iptest", ipv4)
 }
 
 func TestSqliteCreate(t *testing.T) {
@@ -354,4 +384,20 @@ func TestBackup(t *testing.T) {
 	v, _ = DBVersion("test.db")
 	t.Log("Version of backup:", v)
 	t.Log("Backed up:", test_db.BackedUp)
+}
+
+func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := make([]interface{}, len(args))
+	for i, f := range args {
+		dest[i] = &f
+	}
+	for rows.Next() {
+		rows.Scan(dest...)
+		t.Log(args...)
+	}
+	rows.Close()
 }

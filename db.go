@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	pragma_list = "journal_mode locking_mode page_size page_count read_uncommitted busy_timeout temp_store cache_size freelist_count compile_options"
+	pragma_list = "journal_mode locking_mode page_size page_count read_uncommitted busy_timeout temp_store cache_size freelist_count compile_options data_version"
 	dbread      = ".read "    // for sqlite interactive emulation
 	dbpref      = len(dbread) // optimize for same
 )
@@ -180,6 +180,27 @@ func (db DBU) FindSelf(o DBObject) error {
 	return db.FindBy(o, o.KeyField(), o.Key())
 }
 
+func toIPv4(ip int64) string {
+	a := ip >> 24
+	b := (ip >> 16) & 0xFF
+	c := (ip >> 8) & 0xFF
+	d := ip & 0xFF
+
+	return fmt.Sprintf("%d.%d.%d.%d", a, b, c, d)
+}
+
+func fromIPv4(ip string) int64 {
+	octets := strings.Split(ip, ".")
+	if len(octets) != 4 {
+		return -1
+	}
+	a, _ := strconv.ParseInt(octets[0], 10, 64)
+	b, _ := strconv.ParseInt(octets[1], 10, 64)
+	c, _ := strconv.ParseInt(octets[2], 10, 64)
+	d, _ := strconv.ParseInt(octets[3], 10, 64)
+	return (a << 24) + (b << 16) + (c << 8) + d
+}
+
 // The only way to get access to the sqliteconn, which is needed to be able to generate
 // a backup from the database while it is open. This is a less than satisfactory approach
 // because there's no way to have multiple instances open associate the connection with the DSN
@@ -202,6 +223,12 @@ func init() {
 					log.Println("Q ERR:", err)
 				}
 
+				if err := conn.RegisterFunc("toIPv4", toIPv4, true); err != nil {
+					return err
+				}
+				if err := conn.RegisterFunc("fromIPv4", fromIPv4, true); err != nil {
+					return err
+				}
 				return nil
 			},
 		})
@@ -712,6 +739,10 @@ func (db DBU) StreamTab(w io.Writer, query string, args ...interface{}) error {
 }
 
 func isNumber(s string) bool {
+	// leading zeros is likely a string
+	if strings.HasPrefix(s, "00") {
+		return false
+	}
 	return numeric.Match([]byte(strings.TrimSpace(s)))
 }
 
@@ -721,6 +752,7 @@ func (db DBU) StreamJSON(w io.Writer, query string, args ...interface{}) error {
 			fmt.Fprintln(w, ",")
 		}
 		fmt.Fprintln(w, "  {")
+		repl := strings.NewReplacer("\n", "\\\\n", "\t", "\\\\t", "\r", "\\\\r", `"`, `\"`)
 		for i, s := range toString(buffer) {
 			comma := ",\n"
 			if i >= len(buffer)-1 {
@@ -729,7 +761,7 @@ func (db DBU) StreamJSON(w io.Writer, query string, args ...interface{}) error {
 			if isNumber(s) {
 				fmt.Fprintf(w, `    "%s": %s%s`, columns[i], s, comma)
 			} else {
-				s = strings.Replace(s, `"`, `\"`, -1)
+				s = repl.Replace(s)
 				fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
 			}
 		}
