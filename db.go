@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -178,6 +180,52 @@ func (db DBU) FindSelf(o DBObject) error {
 		return ErrKeyMissing
 	}
 	return db.FindBy(o, o.KeyField(), o.Key())
+}
+
+func (db DBU) REST(obj DBObject, w http.ResponseWriter, r *http.Request) {
+	method := strings.ToUpper(r.Method)
+	switch method {
+	case "GET", "PATCH":
+		id := r.URL.Path
+		if i := strings.LastIndex(id, "/"); i > 0 {
+			id = id[i+1:]
+		}
+		if err := db.FindByID(obj, id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "PUT", "POST":
+		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	switch method {
+	case "GET":
+		j, _ := json.MarshalIndent(obj, " ", " ")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, string(j))
+	case "PATCH":
+		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := db.Save(obj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "PUT":
+		if err := db.Save(obj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	case "POST":
+		fmt.Printf("POST: %+v\n", obj)
+		if err := db.Add(obj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 }
 
 func toIPv4(ip int64) string {
