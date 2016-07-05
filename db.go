@@ -4,13 +4,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -119,6 +117,7 @@ func (db DBU) Add(o DBObject) error {
 	if result != nil {
 		id, _ := result.LastInsertId()
 		o.SetID(id)
+		fmt.Println("MY NEW ID:", id, "NOW:", o.Key())
 	}
 	return err
 }
@@ -152,6 +151,29 @@ func (db DBU) Delete(o DBObject) error {
 	return err
 }
 
+// Delete object from datastore by id
+func (db DBU) DeleteByID(o DBObject, id interface{}) error {
+	if db.Debug {
+		log.Println("Q:", DeleteQuery(o), "A:", id)
+	}
+	_, err := db.Exec(DeleteQuery(o), id)
+	return err
+}
+
+// List objects from datastore
+func (db DBU) List(o DBObject) interface{} {
+	/*
+		query := fmt.Sprintf("select %s from %s", o.SelectFields(), o.TableName())
+		rows, err := db.Query(query)
+		if err != nil {
+			log.Println("error on Query: " + query + " -- " + err.Error())
+			return nil
+		}
+		//return results.Interface()
+	*/
+	return []string{"blah"}
+}
+
 func (db DBU) Find(o DBObject, keys QueryKeys) error {
 	where := make([]string, 0, len(keys))
 	what := make([]interface{}, 0, len(keys))
@@ -182,50 +204,35 @@ func (db DBU) FindSelf(o DBObject) error {
 	return db.FindBy(o, o.KeyField(), o.Key())
 }
 
-func (db DBU) REST(obj DBObject, w http.ResponseWriter, r *http.Request) {
-	method := strings.ToUpper(r.Method)
-	switch method {
-	case "GET", "PATCH":
-		id := r.URL.Path
-		if i := strings.LastIndex(id, "/"); i > 0 {
-			id = id[i+1:]
-		}
-		if err := db.FindByID(obj, id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	case "PUT", "POST":
-		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interface{}, error) {
+	query := fmt.Sprintf("select %s from %s ", obj.SelectFields(), obj.TableName())
+	if len(extra) > 0 {
+		query += " " + extra
 	}
-
-	switch method {
-	case "GET":
-		j, _ := json.MarshalIndent(obj, " ", " ")
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, string(j))
-	case "PATCH":
-		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := db.Save(obj); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	case "PUT":
-		if err := db.Save(obj); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	case "POST":
-		fmt.Printf("POST: %+v\n", obj)
-		if err := db.Add(obj); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "Q:", query, "A:", args)
 	}
+	val := reflect.ValueOf(obj)
+	base := reflect.Indirect(val)
+	t := reflect.TypeOf(base.Interface())
+	results := reflect.Zero(reflect.SliceOf(t))
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Println("error on query: " + query + " -- " + err.Error())
+		return nil, err
+	}
+	for rows.Next() {
+		v := reflect.New(t)
+		dest := v.Interface().(DBObject).MemberPointers()
+		err = rows.Scan(dest...)
+		if err != nil {
+			log.Println("scan error: " + err.Error())
+			log.Println("scan query: "+query+" args:", args)
+			return nil, err
+		}
+		results = reflect.Append(results, v.Elem())
+	}
+	return results.Interface(), nil
 }
 
 func toIPv4(ip int64) string {
@@ -564,7 +571,7 @@ func objFields(obj interface{}, skip_key bool) (interface{}, []interface{}) {
 }
 
 func createQuery(obj interface{}, skip_key bool) string {
-	table := ""
+	var table string
 	t := reflect.TypeOf(obj)
 	list := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
@@ -830,6 +837,9 @@ func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{
 	if len(extra) > 0 {
 		Query += " " + extra
 	}
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "Q:", Query, "A:", args)
+	}
 	t := reflect.TypeOf(Kind)
 	results := reflect.Zero(reflect.SliceOf(t))
 	rows, err := db.Query(Query, args...)
@@ -1062,7 +1072,7 @@ func (db DBU) File(file string) error {
 			log.Println("EXEC QUERY:", line, "\nFILE:", db.fileName, "\nERR:", err)
 			return err
 		} else if db.Debug {
-			log.Println(os.Stderr, "QUERY:", line)
+			log.Println("QUERY:", line)
 		}
 	}
 	return nil
@@ -1129,7 +1139,7 @@ func (db *DBU) Backup(to string) error {
 	}
 	activeConn, ok := registry[file]
 	if !ok {
-		return fmt.Errorf("no connection found for file:", db.fileName)
+		return fmt.Errorf("no connection found for file: %s", db.fileName)
 	}
 	file, err = filepath.Abs(to)
 	if err != nil {
@@ -1137,7 +1147,7 @@ func (db *DBU) Backup(to string) error {
 	}
 	backupConn, ok := registry[file]
 	if !ok {
-		return fmt.Errorf("no connection found for file:", to)
+		return fmt.Errorf("no connection found for file: %s", to)
 	}
 	bk, err := backupConn.Backup("main", activeConn, "main")
 	if err != nil {

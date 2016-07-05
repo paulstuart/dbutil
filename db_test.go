@@ -94,13 +94,13 @@ insert into iptest values(fromIPv4('192.168.1.1'));
 `
 	_, err = db.Exec(create)
 	if err != nil {
-		t.Log("%q: %s\n", err, create)
+		t.Logf("%q: %s\n", err, create)
 		return
 	}
 	i, err := db.Exec(ins)
 	t.Log("INSERT:", i)
 	if err != nil {
-		t.Log("%q: %s\n", err, ins)
+		t.Logf("%q: %s\n", err, ins)
 		return
 	}
 	var ip int64
@@ -122,7 +122,7 @@ func TestSqliteCreate(t *testing.T) {
 	`
 	_, err = test_db.Exec(sql)
 	if err != nil {
-		t.Log("%q: %s\n", err, sql)
+		t.Logf("%q: %s\n", err, sql)
 		return
 	}
 
@@ -201,7 +201,7 @@ func TestObjects(t *testing.T) {
 	}
 	s1.ID, err = test_db.ObjectInsert(s1)
 	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: ", err)
+		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
 	s2 := testStruct{
 		Name:     "Master Blaster",
@@ -211,7 +211,7 @@ func TestObjects(t *testing.T) {
 	}
 	s2.ID, err = test_db.ObjectInsert(s2)
 	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: ", err)
+		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
 	s3 := testStruct{
 		Name:     "A, Keeper",
@@ -221,21 +221,21 @@ func TestObjects(t *testing.T) {
 	}
 	s3.ID, err = test_db.ObjectInsert(s3)
 	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: ", err)
+		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
 	s1.Kind = 99
 	err = test_db.ObjectUpdate(s1)
 	if err != nil {
-		t.Errorf("OBJ UPDATE ERROR: ", err)
+		t.Errorf("OBJ UPDATE ERROR: %s", err)
 	}
 	s2.Name = "New Name"
 	err = test_db.ObjectUpdate(s2)
 	if err != nil {
-		t.Errorf("OBJ UPDATE ERROR: ", err)
+		t.Errorf("OBJ UPDATE ERROR: %s", err)
 	}
 	err = test_db.ObjectDelete(s2)
 	if err != nil {
-		t.Errorf("OBJ DELETE ERROR: ", err)
+		t.Errorf("OBJ DELETE ERROR: %s", err)
 	}
 }
 
