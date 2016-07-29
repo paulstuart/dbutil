@@ -23,6 +23,16 @@ type testStruct struct {
 	Modified time.Time `sql:"modified" update:"false"`
 }
 
+func (s *testStruct) Names() []string {
+	return []string{
+		"ID",
+		"Name",
+		"Kind",
+		"Data",
+		"Modified",
+	}
+}
+
 func (s *testStruct) TableName() string {
 	return "structs"
 }

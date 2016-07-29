@@ -56,6 +56,7 @@ type DBObject interface {
 	TableName() string
 	KeyField() string
 	KeyName() string
+	Names() []string
 	SelectFields() string
 	InsertFields() string
 	Key() int64
@@ -64,6 +65,10 @@ type DBObject interface {
 	UpdateValues() []interface{}
 	MemberPointers() []interface{}
 	ModifiedBy(int64, time.Time)
+}
+
+type DBGen interface {
+	NewObj() interface{} //DBObject
 }
 
 func setParams(params string) string {
@@ -162,16 +167,8 @@ func (db DBU) DeleteByID(o DBObject, id interface{}) error {
 
 // List objects from datastore
 func (db DBU) List(o DBObject) interface{} {
-	/*
-		query := fmt.Sprintf("select %s from %s", o.SelectFields(), o.TableName())
-		rows, err := db.Query(query)
-		if err != nil {
-			log.Println("error on Query: " + query + " -- " + err.Error())
-			return nil
-		}
-		//return results.Interface()
-	*/
-	return []string{"blah"}
+	list, _ := db.ListQuery(o, "")
+	return list
 }
 
 func (db DBU) Find(o DBObject, keys QueryKeys) error {
@@ -711,6 +708,25 @@ func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err
 	return
 }
 
+// return list of IDs
+func (db DBU) GetIDs(query string, args ...interface{}) ([]int64, error) {
+	if db.Debug {
+		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
+	}
+	ids := make([]int64, 0, 32)
+	rows, err := db.Query(query, args...)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			ids = append(ids, id)
+		}
+	}
+	return ids, err
+}
+
 func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (err error) {
 	r := reflect.Indirect(reflect.ValueOf(obj)).Interface()
 	query := createQuery(r, false)
@@ -733,11 +749,13 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
 	rows, err := db.Query(query, args...)
-	for rows.Next() {
-		v := reflect.New(t)
-		dest := sPtrs(v.Interface())
-		err = rows.Scan(dest...)
-		s2 = reflect.Append(s2, v.Elem())
+	if err == nil {
+		for rows.Next() {
+			v := reflect.New(t)
+			dest := sPtrs(v.Interface())
+			err = rows.Scan(dest...)
+			s2 = reflect.Append(s2, v.Elem())
+		}
 	}
 	return err, s2.Interface()
 }
