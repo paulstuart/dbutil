@@ -2,7 +2,7 @@ package dbutil
 
 import (
 	"database/sql"
-	"fmt"
+	"log"
 	"os"
 	"testing"
 	"testing/iotest"
@@ -77,7 +77,7 @@ func (s *testStruct) ModifiedBy(u int64, t time.Time) {
 	s.Modified = t
 }
 
-const struct_sql = `create table structs (
+const struct_sql = `create table if not exists structs (
         id integer not null primary key,
         name text,
         kind int,
@@ -92,10 +92,11 @@ func init() {
 }
 
 func TestFuncs(t *testing.T) {
-	fmt.Println("FUNCS!")
-	t.Log("FUNCS!")
-	//db, err := sql.Open("s3", ":memory:")
-	db, err := sql.Open("s3", "test.db")
+	db, err := sql.Open("dbutil", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
 	const create = `create table if not exists iptest ( ip int )`
 	const ins = `
@@ -124,24 +125,24 @@ func TestSqliteCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer test_db.Close()
+	defer test_db.DB.Close()
 
 	sql := `
 	create table foo (id integer not null primary key, name text);
 	delete from foo;
 	`
-	_, err = test_db.Exec(sql)
+	_, err = test_db.DB.Exec(sql)
 	if err != nil {
 		t.Logf("%q: %s\n", err, sql)
 		return
 	}
 
-	_, err = test_db.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
+	_, err = test_db.DB.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := test_db.Query("select id, name from foo")
+	rows, err := test_db.DB.Query("select id, name from foo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +161,12 @@ func TestSqliteDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
 	}
+	test_db.DB.Close()
 	t.Log("DELETED: ", cnt)
 }
 
 func TestSqliteInsert(t *testing.T) {
+	test_db, _ = Open(test_file, true)
 	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
@@ -198,8 +201,22 @@ func TestSqliteTable(t *testing.T) {
 	table.Dumper(w, true)
 }
 
+func TestHTML(t *testing.T) {
+	table, err := test_db.Table("select * from foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table.SetLinks(0, "/x/%s/%s", 0, 1)
+	for row := range table.HTMLRows() {
+		t.Log("ROW")
+		for col := range row.Columns() {
+			t.Log("COL", col)
+		}
+	}
+}
+
 func TestObjects(t *testing.T) {
-	_, err := test_db.Exec(struct_sql)
+	_, err := test_db.DB.Exec(struct_sql)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +352,8 @@ func TestStream(t *testing.T) {
 func TestStreamCSV(t *testing.T) {
 	query := "select id,name,kind from structs"
 	t.Log("\nCSV:")
-	err := test_db.StreamCSV(os.Stdout, query)
+	out := (*twriter)(t)
+	err := test_db.StreamCSV(out, query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +362,8 @@ func TestStreamCSV(t *testing.T) {
 func TestStreamTab(t *testing.T) {
 	query := "select id,name,kind from structs"
 	t.Log("\nTAB:")
-	err := test_db.StreamTab(os.Stdout, query)
+	out := (*twriter)(t)
+	err := test_db.StreamTab(out, query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +371,8 @@ func TestStreamTab(t *testing.T) {
 
 func TestStreamJSON(t *testing.T) {
 	query := "select id,name,kind from structs"
-	err := test_db.StreamJSON(os.Stdout, query)
+	out := (*twriter)(t)
+	err := test_db.StreamJSON(out, query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,10 +380,12 @@ func TestStreamJSON(t *testing.T) {
 
 func TestStreamObject(t *testing.T) {
 	s := &testStruct{Modified: time.Now()}
-	err := test_db.StreamObjects(os.Stdout, s)
+	out := (*twriter)(t)
+	err := test_db.StreamObjects(out, s)
 	if err != nil {
 		t.Fatal(err)
 	}
+	test_db.DB.Close()
 }
 
 func numbChk(t *testing.T, s string) {
@@ -381,18 +403,48 @@ func TestIsNumb(t *testing.T) {
 	numbChk(t, " 1 ")
 }
 
+type twriter testing.T
+
+func NewTestlog(t *testing.T) *log.Logger {
+	w := (*twriter)(t)
+	return log.New(w, "", 0)
+}
+
+func (w *twriter) Write(p []byte) (int, error) {
+	t := (*testing.T)(w)
+	t.Logf("%s\n", string(p))
+	return len(p), nil
+}
+
+func populate(db DBU) {
+	db.Update(struct_sql)
+	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "abc", 23, "what ev er")
+	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "def", 69, "m'kay")
+	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "hij", 42, "meaning of life")
+	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
+}
+
 func TestBackup(t *testing.T) {
-	v, _ := test_db.Version()
-	t.Log("Version prior to backup:", v)
+	test_db, err := Open(test_file, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer test_db.DB.Close()
+
+	populate(test_db)
+	v1, _ := test_db.Version()
+	t.Log("Version prior to backup:", v1)
 	t.Log("Backed up:", test_db.BackedUp)
 	t.Log("Changed prior to backup:", test_db.Changed())
-	err := test_db.Backup("test_backup.db")
+
+	tlog := NewTestlog(t)
+	err = test_db.Backup("test_backup.db", tlog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log("Changed post backup:", test_db.Changed())
-	v, _ = DBVersion("test.db")
-	t.Log("Version of backup:", v)
+	v2, _ := DBVersion("test.db")
+	t.Log("Version of backup:", v2)
 	t.Log("Backed up:", test_db.BackedUp)
 }
 

@@ -11,7 +11,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -19,22 +18,70 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
+// N/A, impacts db, or multi-column -- ignore for now
+//collation_list
+//database_list
+//foreign_key_check
+//foreign_key_list
+//quick_check
+//wal_checkpoint
+
 const (
-	pragma_list = "journal_mode locking_mode page_size page_count read_uncommitted busy_timeout temp_store cache_size freelist_count compile_options data_version"
-	dbread      = ".read "    // for sqlite interactive emulation
-	dbpref      = len(dbread) // optimize for same
+	pragma_list = `
+	application_id
+	auto_vacuum
+	automatic_index
+	busy_timeout
+	cache_size
+	cache_spill
+	cell_size_check
+	checkpoint_fullfsync
+	compile_options
+	data_version
+	defer_foreign_keys
+	encoding
+	foreign_keys
+	freelist_count
+	fullfsync
+	journal_mode
+	journal_size_limit
+	legacy_file_format
+	locking_mode
+	max_page_count
+	mmap_size
+	page_count
+	page_size
+	query_only
+	read_uncommitted
+	recursive_triggers
+	reverse_unordered_selects
+	schema_version
+	secure_delete
+	soft_heap_limit
+	synchronous
+	temp_store
+	threads
+	user_version
+	wal_autocheckpoint
+	`
+
+	dbread = ".read "    // for sqlite interactive emulation
+	dbpref = len(dbread) // optimize for same
 )
 
 var (
-	pragmas     = strings.Split(pragma_list, " ")
+	pragmas     = strings.Fields(pragma_list)
 	c_comment   = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	sql_comment = regexp.MustCompile(`\s*--.*`)
 	readline    = regexp.MustCompile(`(\.read \S+)`)
 	numeric, _  = regexp.Compile("^[0-9]+(\\.[0-9])?$")
 	registry    = make(map[string]*sqlite3.SQLiteConn)
+	mu, rmu     sync.Mutex
+	debug_db    = false
 )
 
 var (
@@ -44,10 +91,50 @@ var (
 )
 
 type DBU struct {
-	*sql.DB
-	fileName string
-	Debug    bool
-	BackedUp uint64
+	BackedUp int64
+	DB       *sql.DB
+	logger   *log.Logger
+}
+
+func Debug(on bool) {
+	mu.Lock()
+	debug_db = on
+	mu.Unlock()
+}
+
+func debugging() bool {
+	mu.Lock()
+	enabled := debug_db
+	mu.Unlock()
+	return enabled
+}
+
+func (db DBU) Logger(logger *log.Logger) {
+	if logger == nil {
+		logger = log.New(ioutil.Discard, "", 0)
+	}
+	mu.Lock()
+	db.logger = logger
+	mu.Unlock()
+}
+
+func register(file string, conn *sqlite3.SQLiteConn) {
+	rmu.Lock()
+	registry[file] = conn
+	rmu.Unlock()
+}
+
+func registered(file string) *sqlite3.SQLiteConn {
+	rmu.Lock()
+	conn := registry[file]
+	rmu.Unlock()
+	return conn
+}
+
+func logger(q string, args ...interface{}) {
+	if debugging() {
+		spew.Println("Q:", q, "A:", args)
+	}
 }
 
 type QueryKeys map[string]interface{}
@@ -115,14 +202,11 @@ func DeleteQuery(o DBObject) string {
 // Add new object to datastore
 func (db DBU) Add(o DBObject) error {
 	args := o.InsertValues()
-	if db.Debug {
-		log.Println("Q:", InsertQuery(o), "A:", args)
-	}
-	result, err := db.Exec(InsertQuery(o), args...)
+	logger(InsertQuery(o), args)
+	result, err := db.DB.Exec(InsertQuery(o), args...)
 	if result != nil {
 		id, _ := result.LastInsertId()
 		o.SetID(id)
-		fmt.Println("MY NEW ID:", id, "NOW:", o.Key())
 	}
 	return err
 }
@@ -130,7 +214,7 @@ func (db DBU) Add(o DBObject) error {
 // Add new or replace existing object in datastore
 func (db DBU) Replace(o DBObject) error {
 	args := o.InsertValues()
-	result, err := db.Exec(ReplaceQuery(o), args...)
+	result, err := db.DB.Exec(ReplaceQuery(o), args)
 	if result != nil {
 		id, _ := result.LastInsertId()
 		o.SetID(id)
@@ -149,19 +233,15 @@ func (db DBU) Save(o DBObject) error {
 
 // Delete object from datastore
 func (db DBU) Delete(o DBObject) error {
-	if db.Debug {
-		log.Println("Q:", DeleteQuery(o), "A:", o.Key())
-	}
-	_, err := db.Exec(DeleteQuery(o), o.Key())
+	logger(DeleteQuery(o), o.Key())
+	_, err := db.DB.Exec(DeleteQuery(o), o.Key())
 	return err
 }
 
 // Delete object from datastore by id
 func (db DBU) DeleteByID(o DBObject, id interface{}) error {
-	if db.Debug {
-		log.Println("Q:", DeleteQuery(o), "A:", id)
-	}
-	_, err := db.Exec(DeleteQuery(o), id)
+	logger(DeleteQuery(o), id)
+	_, err := db.DB.Exec(DeleteQuery(o), id)
 	return err
 }
 
@@ -206,14 +286,12 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 	if len(extra) > 0 {
 		query += " " + extra
 	}
-	if db.Debug {
-		fmt.Fprintln(os.Stderr, "Q:", query, "A:", args)
-	}
+	logger(query, args)
 	val := reflect.ValueOf(obj)
 	base := reflect.Indirect(val)
 	t := reflect.TypeOf(base.Interface())
 	results := reflect.Zero(reflect.SliceOf(t))
-	rows, err := db.Query(query, args...)
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		log.Println("error on query: " + query + " -- " + err.Error())
 		return nil, err
@@ -221,14 +299,13 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 	for rows.Next() {
 		v := reflect.New(t)
 		dest := v.Interface().(DBObject).MemberPointers()
-		err = rows.Scan(dest...)
-		if err != nil {
-			log.Println("scan error: " + err.Error())
-			log.Println("scan query: "+query+" args:", args)
-			return nil, err
+		if err = rows.Scan(dest...); err != nil {
+			fmt.Println("OOOPSIE", err)
+			continue
 		}
 		results = reflect.Append(results, v.Elem())
 	}
+	//log.Println("LIST CNT:", results.Len())
 	return results.Interface(), nil
 }
 
@@ -259,34 +336,22 @@ func fromIPv4(ip string) int64 {
 //
 // Since our use case is to normally have one instance open this should be workable for now
 func init() {
-	sql.Register("s3",
+	sql.Register("dbutil",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				t, err := qRows(conn, "PRAGMA database_list")
-				if err == nil {
-					if len(t.Rows) > 0 && len(t.Rows[0]) > 2 {
-						file := t.Rows[0][2]
-						m := sync.Mutex{}
-						m.Lock()
-						registry[file] = conn
-						m.Unlock()
-					}
-				} else {
-					log.Println("Q ERR:", err)
-				}
-
 				if err := conn.RegisterFunc("toIPv4", toIPv4, true); err != nil {
 					return err
 				}
 				if err := conn.RegisterFunc("fromIPv4", fromIPv4, true); err != nil {
 					return err
 				}
+				register(filename(conn), conn)
 				return nil
 			},
 		})
 }
 
-func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table, error) {
+func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, error) {
 	t := Table{}
 	rows, err := conn.Query(query, args)
 	if err != nil {
@@ -327,18 +392,22 @@ func qRows(conn *sqlite3.SQLiteConn, query string, args ...driver.Value) (Table,
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
 func Open(file string, init bool) (DBU, error) {
-	dbu := DBU{nil, file, false, 0}
+	dbu := DBU{}
 	if init {
 		os.Mkdir(path.Dir(file), 0777)
 		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
-			return DBU{}, err
+			return dbu, err
 		} else {
 			f.Close()
 		}
 	}
-	db, err := sql.Open("s3", file)
-	db.Ping()
-	dbu.DB = db
+	db, err := sql.Open("dbutil", file)
+	if err == nil {
+		if err = db.Ping(); err != nil {
+			return dbu, err
+		}
+		dbu.DB = db
+	}
 	return dbu, err
 }
 
@@ -377,7 +446,7 @@ func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 		return -1, fmt.Errorf("no table defined for object: %v (fields: %s)", reflect.TypeOf(obj), fields)
 	}
 	query := fmt.Sprintf("insert into %s (%s) values (%s)", table, fields, Placeholders(len(a)))
-	result, err := db.Exec(query, a...)
+	result, err := db.DB.Exec(query, a...)
 	if result != nil {
 		id, _ := result.LastInsertId()
 		return id, err
@@ -616,12 +685,12 @@ func keyIndex(obj interface{}) int {
 	return 0 // TODO: error handling!
 }
 
-func (db DBU) InsertMany(sqltext string, args [][]interface{}) (err error) {
-	tx, err := db.Begin()
+func (db DBU) InsertMany(query string, args [][]interface{}) (err error) {
+	tx, err := db.DB.Begin()
 	if err != nil {
 		return
 	}
-	stmt, err := tx.Prepare(sqltext)
+	stmt, err := tx.Prepare(query)
 	if err != nil {
 		tx.Rollback()
 		return
@@ -647,11 +716,11 @@ func (db DBU) Insert(sqltext string, args ...interface{}) (i int64, e error) {
 }
 
 func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, err error) {
-	tx, err := db.Begin()
+	tx, err := db.DB.Begin()
 	if err != nil {
 		return
 	}
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "QUERY:", sqltext, "ARGS:", args)
 	}
 	stmt, err := tx.Prepare(sqltext)
@@ -694,27 +763,27 @@ func (db DBU) GetInt(Query string, args ...interface{}) (reply int, err error) {
 }
 
 func (db DBU) GetType(query string, reply interface{}, args ...interface{}) (err error) {
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
-	row := db.QueryRow(query, args...)
+	row := db.DB.QueryRow(query, args...)
 	err = row.Scan(reply)
 	return
 }
 
 func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err error) {
-	row := db.QueryRow(query, args...)
+	row := db.DB.QueryRow(query, args...)
 	err = row.Scan(*reply...)
 	return
 }
 
 // return list of IDs
 func (db DBU) GetIDs(query string, args ...interface{}) ([]int64, error) {
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
 	ids := make([]int64, 0, 32)
-	rows, err := db.Query(query, args...)
+	rows, err := db.DB.Query(query, args...)
 	if err == nil {
 		for rows.Next() {
 			var id int64
@@ -733,10 +802,10 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	if len(extra) > 0 {
 		query += " " + extra
 	}
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
-	row := db.QueryRow(query, args...)
+	row := db.DB.QueryRow(query, args...)
 	dest := sPtrs(obj)
 	err = row.Scan(dest...)
 	return
@@ -745,10 +814,10 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(Kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := db.DB.Query(query, args...)
 	if err == nil {
 		for rows.Next() {
 			v := reflect.New(t)
@@ -761,10 +830,10 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 }
 
 func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args ...interface{}) error {
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "STREAM QUERY:", query, "ARGS:", args)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		return err
 	}
@@ -855,12 +924,12 @@ func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{
 	if len(extra) > 0 {
 		Query += " " + extra
 	}
-	if db.Debug {
+	if debugging() {
 		fmt.Fprintln(os.Stderr, "Q:", Query, "A:", args)
 	}
 	t := reflect.TypeOf(Kind)
 	results := reflect.Zero(reflect.SliceOf(t))
-	rows, err := db.Query(Query, args...)
+	rows, err := db.DB.Query(Query, args...)
 	if err != nil {
 		log.Println("error on Query: " + Query + " -- " + err.Error())
 		return nil, err
@@ -888,7 +957,7 @@ func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) inter
 	elem := maptype.Elem()
 	themap := reflect.MakeMap(maptype)
 	index := keyIndex(reflect.Zero(elem).Interface())
-	rows, err := db.Query(Query, args...)
+	rows, err := db.DB.Query(Query, args...)
 	if err != nil {
 		log.Println("LoadMap error:" + err.Error())
 		return nil
@@ -933,7 +1002,7 @@ func toString(in []interface{}) []string {
 }
 
 func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
-	rows, err := db.Query(Query, args...)
+	rows, err := db.DB.Query(Query, args...)
 	if err != nil {
 		return []string{}, err
 	}
@@ -952,10 +1021,8 @@ func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
 }
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
-	if db.Debug {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
-	rows, err := db.Query(query, args...)
+	logger(query, args)
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		log.Println("error on query: " + query + " -- " + err.Error())
 		return nil
@@ -974,7 +1041,7 @@ func (db DBU) Get(members []interface{}, query string, args ...interface{}) erro
 }
 
 func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
-	rows, err := db.Query(Query, args...)
+	rows, err := db.DB.Query(Query, args...)
 	if err != nil {
 		return
 	}
@@ -997,10 +1064,8 @@ func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string
 }
 
 func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
-	if db.Debug {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
-	rows, err := db.Query(query, args...)
+	logger(query, args)
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1028,10 +1093,8 @@ func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 }
 
 func (db DBU) Rows(Query string, args ...interface{}) (results []string, err error) {
-	if db.Debug {
-		log.Println("Q:", Query, "A:", args)
-	}
-	rows, err := db.Query(Query, args...)
+	logger(Query, args)
+	rows, err := db.DB.Query(Query, args...)
 	if err != nil {
 		return
 	}
@@ -1086,10 +1149,10 @@ func (db DBU) File(file string) error {
 			multiline += ";\n" + line // restore our 'split' transaction
 			continue
 		}
-		if _, err := db.Exec(line); err != nil {
-			log.Println("EXEC QUERY:", line, "\nFILE:", db.fileName, "\nERR:", err)
+		if _, err := db.DB.Exec(line); err != nil {
+			log.Println("EXEC QUERY:", line, "\nFILE:", db.Filename(), "\nERR:", err)
 			return err
-		} else if db.Debug {
+		} else if debugging() {
 			log.Println("QUERY:", line)
 		}
 	}
@@ -1101,7 +1164,7 @@ func (db DBU) Cmd(Query string) (affected, last int64, err error) {
 	if 0 == len(Query) {
 		return
 	}
-	i, dberr := db.Exec(Query)
+	i, dberr := db.DB.Exec(Query)
 	if dberr != nil {
 		err = dberr
 		return
@@ -1111,23 +1174,37 @@ func (db DBU) Cmd(Query string) (affected, last int64, err error) {
 	return
 }
 
+func (db DBU) pragmatic(pragma string, dest ...interface{}) error {
+	row := db.DB.QueryRow("PRAGMA " + pragma)
+	return row.Scan(dest...)
+}
+
 func (db DBU) Pragma(pragma string) (string, error) {
 	var status string
-	row := db.QueryRow("PRAGMA " + pragma)
-	err := row.Scan(&status)
+	/*
+			if debugging() {
+				log.Println("PRAGMA ", pragma)
+			}
+		row := db.DB.QueryRow("PRAGMA " + pragma)
+		err := row.Scan(&status)
+	*/
+	err := db.pragmatic(pragma, &status)
 	return status, err
 }
 
-func (db DBU) Pragmas() map[string]string {
+func (db DBU) Pragmas() (map[string]string, error) {
+	var err error
 	status := make(map[string]string, 0)
 	for _, pragma := range pragmas {
-		status[pragma], _ = db.Pragma(pragma)
+		if status[pragma], err = db.Pragma(pragma); err != nil {
+			break
+		}
 	}
-	return status
+	return status, err
 }
 
 func (db DBU) Stats() []string {
-	status := db.Pragmas()
+	status, _ := db.Pragmas()
 	stats := make([]string, 0, len(status))
 	for _, pragma := range pragmas {
 		stats = append(stats, pragma+": "+status[pragma])
@@ -1140,42 +1217,63 @@ func (db DBU) Databases() *Table {
 	return t
 }
 
-func (db *DBU) Backup(to string) error {
-	os.Remove(to)
+// get filename of db
+func filename(conn driver.Queryer) string {
+	t, err := qRows(conn, "PRAGMA database_list")
+
+	if err == nil {
+		if len(t.Rows) > 0 && len(t.Rows[0]) > 2 {
+			return t.Rows[0][2]
+		}
+
+	}
+	return ""
+}
+
+func slptr(arr []string) []interface{} {
+	resp := make([]interface{}, 0, len(arr))
+	for i := range arr {
+		resp = append(resp, &arr[i])
+	}
+	return resp
+}
+
+func (db DBU) Filename() string {
+	buff := make([]string, 3)
+	dest := slptr(buff)
+	if err := db.pragmatic("database_list", dest...); err != nil {
+		return "filename error:" + err.Error()
+	}
+	return buff[2]
+}
+
+func (db *DBU) Backup(dest string, logger *log.Logger) error {
+	os.Remove(dest)
 
 	v, _ := db.Version()
-	destDb, err := sql.Open("s3", to)
+	destDb, err := Open(dest, true)
 	if err != nil {
 		return err
 	}
-	defer destDb.Close()
-	destDb.Ping()
+	defer destDb.DB.Close()
+	err = destDb.DB.Ping()
 
-	file, err := filepath.Abs(db.fileName)
+	logger.Println("FROM:", db.Filename())
+	logger.Println("TO  :", destDb.Filename())
+
+	from := registered(db.Filename())
+	to := registered(destDb.Filename())
+
+	//bk, err := from.Backup("main", to, "main")
+	bk, err := to.Backup("main", from, "main")
 	if err != nil {
-		return err
-	}
-	activeConn, ok := registry[file]
-	if !ok {
-		return fmt.Errorf("no connection found for file: %s", db.fileName)
-	}
-	file, err = filepath.Abs(to)
-	if err != nil {
-		return err
-	}
-	backupConn, ok := registry[file]
-	if !ok {
-		return fmt.Errorf("no connection found for file: %s", to)
-	}
-	bk, err := backupConn.Backup("main", activeConn, "main")
-	if err != nil {
+		logger.Println("BACKUP ERR:", err)
 		return err
 	}
 
+	defer bk.Finish()
 	for {
-		if db.Debug {
-			log.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
-		}
+		logger.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
 		done, err := bk.Step(1024)
 		if err != nil {
 			return err
@@ -1184,7 +1282,6 @@ func (db *DBU) Backup(to string) error {
 			break
 		}
 	}
-	bk.Finish()
 	db.BackedUp = v
 	return err
 }
@@ -1224,6 +1321,11 @@ func DBVersion(file string) (uint64, error) {
 	return a, nil
 }
 
-func (db DBU) Version() (uint64, error) {
-	return DBVersion(db.fileName)
+/*
+ */
+
+func (db DBU) Version() (int64, error) {
+	var version int64
+	err := db.pragmatic("data_version", &version)
+	return version, err
 }
