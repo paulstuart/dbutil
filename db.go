@@ -133,7 +133,11 @@ func registered(file string) *sqlite3.SQLiteConn {
 
 func logger(q string, args ...interface{}) {
 	if debugging() {
-		spew.Println("Q:", q, "A:", args)
+		//spew.Println("Q:", q, "A:", args)
+		tmp := make([]interface{}, 0, len(args)+3)
+		tmp = append(tmp, "Q:", q, "A:")
+		tmp = append(tmp, args...)
+		spew.Println(tmp)
 	}
 }
 
@@ -225,7 +229,7 @@ func (db DBU) Replace(o DBObject) error {
 // Save modified object in datastore
 func (db DBU) Save(o DBObject) error {
 	id, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
-	if err == nil {
+	if err == nil && id > 0 {
 		o.SetID(id)
 	}
 	return err
@@ -720,9 +724,7 @@ func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, er
 	if err != nil {
 		return
 	}
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "QUERY:", sqltext, "ARGS:", args)
-	}
+	logger(sqltext, args)
 	stmt, err := tx.Prepare(sqltext)
 	if err != nil {
 		tx.Rollback()
@@ -763,9 +765,7 @@ func (db DBU) GetInt(Query string, args ...interface{}) (reply int, err error) {
 }
 
 func (db DBU) GetType(query string, reply interface{}, args ...interface{}) (err error) {
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
+	logger(query, args)
 	row := db.DB.QueryRow(query, args...)
 	err = row.Scan(reply)
 	return
@@ -779,9 +779,7 @@ func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err
 
 // return list of IDs
 func (db DBU) GetIDs(query string, args ...interface{}) ([]int64, error) {
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
+	logger(query, args)
 	ids := make([]int64, 0, 32)
 	rows, err := db.DB.Query(query, args...)
 	if err == nil {
@@ -802,9 +800,7 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	if len(extra) > 0 {
 		query += " " + extra
 	}
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
+	logger(query, args)
 	row := db.DB.QueryRow(query, args...)
 	dest := sPtrs(obj)
 	err = row.Scan(dest...)
@@ -814,9 +810,7 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (error, interface{}) {
 	t := reflect.TypeOf(Kind)
 	s2 := reflect.Zero(reflect.SliceOf(t))
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "QUERY:", query, "ARGS:", args)
-	}
+	logger(query, args)
 	rows, err := db.DB.Query(query, args...)
 	if err == nil {
 		for rows.Next() {
@@ -830,9 +824,7 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 }
 
 func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args ...interface{}) error {
-	if debugging() {
-		fmt.Fprintln(os.Stderr, "STREAM QUERY:", query, "ARGS:", args)
-	}
+	logger(query, args)
 	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		return err
