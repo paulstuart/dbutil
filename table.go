@@ -31,15 +31,15 @@ type Sorted struct {
 type LinkFunc func(string) bool
 
 type Table struct {
-	Name     string
 	Columns  []string
 	Rows     []Row
-	Sorting  []Sorted
-	Links    HTMLLinks
-	Filters  map[int]LinkFunc
-	Hidden   map[int]struct{}
-	Types    map[string][]int
-	Selected []int
+	Name     string           `json:"-"`
+	Sorting  []Sorted         `json:"-"`
+	Links    HTMLLinks        `json:"-"`
+	Filters  map[int]LinkFunc `json:"-"`
+	Hidden   map[int]struct{} `json:"-"`
+	Types    map[string][]int `json:"-"`
+	Selected []int            `json:"-"`
 }
 
 func (t *Table) AddSort(col int, decending bool) {
@@ -283,7 +283,7 @@ func (r Row) diff(prior Row, cols ...int) Row {
 		case len(r[i]) > 0 && len(prior[i]) == 0:
 			reply[i] = "added: " + r[i]
 		case r[i] != prior[i]:
-			reply[i] = "changed: " + prior[i] + " ==> " + r[i]
+			reply[i] = "changed: " + prior[i] + " :: " + r[i]
 		}
 	}
 	return reply

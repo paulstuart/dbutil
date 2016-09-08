@@ -228,10 +228,7 @@ func (db DBU) Replace(o DBObject) error {
 
 // Save modified object in datastore
 func (db DBU) Save(o DBObject) error {
-	id, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
-	if err == nil && id > 0 {
-		o.SetID(id)
-	}
+	_, err := db.Update(UpdateQuery(o), o.UpdateValues()...)
 	return err
 }
 
@@ -309,7 +306,7 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 		}
 		results = reflect.Append(results, v.Elem())
 	}
-	//log.Println("LIST CNT:", results.Len())
+	rows.Close()
 	return results.Interface(), nil
 }
 
@@ -361,6 +358,7 @@ func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, erro
 	if err != nil {
 		return t, err
 	}
+	defer rows.Close()
 	t.Columns = rows.Columns()
 	buffer := make([]interface{}, len(t.Columns))
 	dest := make([]driver.Value, len(buffer))
@@ -791,6 +789,7 @@ func (db DBU) GetIDs(query string, args ...interface{}) ([]int64, error) {
 			ids = append(ids, id)
 		}
 	}
+	rows.Close()
 	return ids, err
 }
 
@@ -820,6 +819,7 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 			s2 = reflect.Append(s2, v.Elem())
 		}
 	}
+	rows.Close()
 	return err, s2.Interface()
 }
 
@@ -847,6 +847,7 @@ func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args .
 		fn(columns, i, buffer)
 		i++
 	}
+	rows.Close()
 	return err
 }
 
@@ -926,6 +927,7 @@ func (db DBU) ObjectListQuery(Kind interface{}, extra string, args ...interface{
 		log.Println("error on Query: " + Query + " -- " + err.Error())
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		v := reflect.New(t)
 		dest := sPtrs(v.Interface())
@@ -963,6 +965,7 @@ func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) inter
 		key := reflect.Indirect(k2)
 		themap.SetMapIndex(key, v.Elem())
 	}
+	rows.Close()
 	return themap.Interface()
 }
 
