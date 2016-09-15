@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"path"
 	"reflect"
@@ -133,11 +134,10 @@ func registered(file string) *sqlite3.SQLiteConn {
 
 func logger(q string, args ...interface{}) {
 	if debugging() {
-		//spew.Println("Q:", q, "A:", args)
 		tmp := make([]interface{}, 0, len(args)+3)
 		tmp = append(tmp, "Q:", q, "A:")
 		tmp = append(tmp, args...)
-		spew.Println(tmp)
+		spew.Println(tmp...)
 	}
 }
 
@@ -306,8 +306,10 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 		}
 		results = reflect.Append(results, v.Elem())
 	}
+	err = rows.Err()
 	rows.Close()
-	return results.Interface(), nil
+	//fmt.Println("LIST LEN:", results.Len())
+	return results.Interface(), err
 }
 
 func toIPv4(ip int64) string {
@@ -395,15 +397,25 @@ func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, erro
 //  where key and table are used for a single entry
 func Open(file string, init bool) (DBU, error) {
 	dbu := DBU{}
+	full, err := url.Parse(file)
+	if err != nil {
+		return dbu, err
+	}
+	filename := full.Path
 	if init {
-		os.Mkdir(path.Dir(file), 0777)
-		if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0666); err != nil {
+		os.Mkdir(path.Dir(filename), 0777)
+		if f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
 			return dbu, err
 		} else {
 			f.Close()
 		}
 	}
 	db, err := sql.Open("dbutil", file)
+	/*
+		log.Println("db sleep")
+		time.Sleep(1 * time.Hour)
+		log.Println("db slept")
+	*/
 	if err == nil {
 		if err = db.Ping(); err != nil {
 			return dbu, err
