@@ -247,9 +247,8 @@ func (db DBU) DeleteByID(o DBObject, id interface{}) error {
 }
 
 // List objects from datastore
-func (db DBU) List(o DBObject) interface{} {
-	list, _ := db.ListQuery(o, "")
-	return list
+func (db DBU) List(o DBObject) (interface{}, error) {
+	return db.ListQuery(o, "")
 }
 
 func (db DBU) Find(o DBObject, keys QueryKeys) error {
@@ -301,7 +300,7 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 		v := reflect.New(t)
 		dest := v.Interface().(DBObject).MemberPointers()
 		if err = rows.Scan(dest...); err != nil {
-			fmt.Println("OOOPSIE", err)
+			fmt.Println("query:", query, "error:", err)
 			continue
 		}
 		results = reflect.Append(results, v.Elem())
