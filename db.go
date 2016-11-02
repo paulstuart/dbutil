@@ -134,10 +134,7 @@ func registered(file string) *sqlite3.SQLiteConn {
 
 func logger(q string, args ...interface{}) {
 	if debugging() {
-		tmp := make([]interface{}, 0, len(args)+3)
-		tmp = append(tmp, "Q:", q, "A:")
-		tmp = append(tmp, args...)
-		spew.Println(tmp...)
+		log.Println(spew.Sprintf("Q: %s, A: %v", q, args))
 	}
 }
 
@@ -312,6 +309,7 @@ func (db DBU) ListQuery(obj DBObject, extra string, args ...interface{}) (interf
 }
 
 func toIPv4(ip int64) string {
+	log.Println("to ipv4:", ip)
 	a := ip >> 24
 	b := (ip >> 16) & 0xFF
 	c := (ip >> 8) & 0xFF
@@ -321,6 +319,7 @@ func toIPv4(ip int64) string {
 }
 
 func fromIPv4(ip string) int64 {
+	log.Println("from ipv4:", ip)
 	octets := strings.Split(ip, ".")
 	if len(octets) != 4 {
 		return -1
@@ -341,10 +340,10 @@ func init() {
 	sql.Register("dbutil",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				if err := conn.RegisterFunc("toIPv4", toIPv4, true); err != nil {
+				if err := conn.RegisterFunc("iptoa", toIPv4, true); err != nil {
 					return err
 				}
-				if err := conn.RegisterFunc("fromIPv4", fromIPv4, true); err != nil {
+				if err := conn.RegisterFunc("atoip", fromIPv4, true); err != nil {
 					return err
 				}
 				register(filename(conn), conn)
@@ -410,11 +409,6 @@ func Open(file string, init bool) (DBU, error) {
 		}
 	}
 	db, err := sql.Open("dbutil", file)
-	/*
-		log.Println("db sleep")
-		time.Sleep(1 * time.Hour)
-		log.Println("db slept")
-	*/
 	if err == nil {
 		if err = db.Ping(); err != nil {
 			return dbu, err
