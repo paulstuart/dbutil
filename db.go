@@ -69,9 +69,6 @@ const (
 	user_version
 	wal_autocheckpoint
 	`
-
-	dbread = ".read "    // for sqlite interactive emulation
-	dbpref = len(dbread) // optimize for same
 )
 
 var (
@@ -420,7 +417,13 @@ func Open(file string, init bool) (DBU, error) {
 
 func CreateIfMissing(name, schema string) DBU {
 	var fresh bool
-	if _, err := os.Stat(name); os.IsNotExist(err) {
+	var file string
+	if strings.HasPrefix(name, "file://") {
+		file = name[7:]
+	} else {
+		file = name
+	}
+	if _, err := os.Stat(file); os.IsNotExist(err) {
 		fresh = true
 	}
 	db, err := Open(name, true)
@@ -428,8 +431,7 @@ func CreateIfMissing(name, schema string) DBU {
 		panic(err)
 	}
 	if fresh {
-		err = db.File(schema)
-		if err != nil {
+		if err = db.File(schema); err != nil {
 			panic(err)
 		}
 	}
@@ -723,6 +725,7 @@ func (db DBU) Insert(sqltext string, args ...interface{}) (i int64, e error) {
 }
 
 func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, err error) {
+	logger(sqltext, args)
 	tx, err := db.DB.Begin()
 	if err != nil {
 		return
@@ -1133,11 +1136,15 @@ func (db DBU) File(file string) error {
 		if 0 == len(line) {
 			continue
 		}
-		if len(line) >= dbpref && dbread == line[:dbpref] {
-			err = db.File(line[dbpref:])
+		if strings.HasPrefix(line, ".read ") {
+			name := strings.TrimSpace(line[7:])
+			err = db.File(name)
 			if err != nil {
-				log.Println("READ FILE:", line[dbpref:], "ERR:", err)
+				log.Println("READ FILE:", name, "ERR:", err)
 			}
+			continue
+		} else if strings.HasPrefix(line, ".print ") {
+			fmt.Println(strings.Trim(strings.TrimSpace(line[7:]), "'"))
 			continue
 		} else if startsWith(line, "CREATE TRIGGER") {
 			multiline = line
