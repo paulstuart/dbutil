@@ -93,6 +93,7 @@ type SQLInfo struct {
 	KeyField  string            // sql field for key
 	UserField string            // sql field for user id
 	TimeField string            // sql field for timestamp
+	Order     []string          // sql fields in order
 	Fields    map[string]string //
 	NoUpdate  map[string]struct{}
 }
@@ -351,6 +352,7 @@ func (g *Generator) format() []byte {
 func sqlTags(typeName string, fields *ast.FieldList) *SQLInfo {
 	info := SQLInfo{}
 	info.Fields = make(map[string]string) // [memberName]sqlName
+	info.Order = make([]string, 0, len(fields.List))
 	info.NoUpdate = make(map[string]struct{})
 	good := false
 	for _, field := range fields.List {
@@ -368,6 +370,7 @@ func sqlTags(typeName string, fields *ast.FieldList) *SQLInfo {
 					info.KeyField = sql
 				} else {
 					info.Fields[field.Names[0].Name] = sql
+					info.Order = append(info.Order, field.Names[0].Name)
 				}
 				good = true
 			}
@@ -427,8 +430,9 @@ func (g *Generator) buildWrappers(s *SQLInfo) {
 	if len(s.KeyName) > 0 {
 		ptr = append(ptr, "&o."+s.KeyName)
 	}
-	for k, v := range s.Fields {
+	for _, k := range s.Order {
 		if len(k) > 0 {
+			v := s.Fields[k]
 			sql = append(sql, v)
 			names = append(names, `"`+k+`"`)
 			elem = append(elem, "o."+k)
