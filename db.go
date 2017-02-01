@@ -72,14 +72,15 @@ const (
 )
 
 var (
-	pragmas     = strings.Fields(pragma_list)
-	c_comment   = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	sql_comment = regexp.MustCompile(`\s*--.*`)
-	readline    = regexp.MustCompile(`(\.read \S+)`)
-	numeric, _  = regexp.Compile("^[0-9]+(\\.[0-9])?$")
-	registry    = make(map[string]*sqlite3.SQLiteConn)
-	mu, rmu     sync.Mutex
-	debug_db    = false
+	pragmas      = strings.Fields(pragma_list)
+	c_comment    = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	sql_comment  = regexp.MustCompile(`\s*--.*`)
+	readline     = regexp.MustCompile(`(\.read \S+)`)
+	numeric, _   = regexp.Compile("^[0-9]+(\\.[0-9])?$")
+	registry     = make(map[string]*sqlite3.SQLiteConn)
+	debug_db     = false
+	initialized  = false
+	mu, rmu, imu sync.Mutex
 )
 
 var (
@@ -333,7 +334,14 @@ func fromIPv4(ip string) int64 {
 // because there's no way to have multiple instances open associate the connection with the DSN
 //
 // Since our use case is to normally have one instance open this should be workable for now
-func init() {
+func sqlInit(hook string) {
+	imu.Lock()
+	defer imu.Unlock()
+	if initialized {
+		return
+	}
+	initialized = true
+
 	sql.Register("dbutil",
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
@@ -344,6 +352,14 @@ func init() {
 					return err
 				}
 				register(filename(conn), conn)
+
+				if len(hook) > 0 {
+					if _, err := conn.Exec(hook, nil); err != nil {
+						fmt.Println("HOOK:", hook, "ERR:", err)
+						return err
+					}
+				}
+
 				return nil
 			},
 		})
@@ -390,7 +406,8 @@ func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, erro
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
-func Open(file string, init bool) (DBU, error) {
+func Open(file, hook string, init bool) (DBU, error) {
+	sqlInit(hook)
 	dbu := DBU{}
 	full, err := url.Parse(file)
 	if err != nil {
@@ -415,7 +432,7 @@ func Open(file string, init bool) (DBU, error) {
 	return dbu, err
 }
 
-func CreateIfMissing(name, schema string) DBU {
+func CreateIfMissing(name, schema, hook string) DBU {
 	var fresh bool
 	var file string
 	if strings.HasPrefix(name, "file://") {
@@ -426,7 +443,7 @@ func CreateIfMissing(name, schema string) DBU {
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		fresh = true
 	}
-	db, err := Open(name, true)
+	db, err := Open(name, hook, true)
 	if err != nil {
 		panic(err)
 	}
@@ -1258,7 +1275,7 @@ func (db *DBU) Backup(dest string, logger *log.Logger) error {
 	os.Remove(dest)
 
 	v, _ := db.Version()
-	destDb, err := Open(dest, true)
+	destDb, err := Open(dest, "", true)
 	if err != nil {
 		return err
 	}

@@ -92,6 +92,7 @@ func init() {
 }
 
 func TestFuncs(t *testing.T) {
+	sqlInit("")
 	db, err := sql.Open("dbutil", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +122,7 @@ insert into iptest values(fromIPv4('192.168.1.1'));
 }
 
 func TestSqliteCreate(t *testing.T) {
-	test_db, err := Open(test_file, true)
+	test_db, err := Open(test_file, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ = Open(test_file, true)
+	test_db, _ = Open(test_file, "", true)
 	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
@@ -166,7 +167,7 @@ func TestSqliteDelete(t *testing.T) {
 }
 
 func TestSqliteInsert(t *testing.T) {
-	test_db, _ = Open(test_file, true)
+	test_db, _ = Open(test_file, "", true)
 	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
@@ -425,7 +426,7 @@ func populate(db DBU) {
 }
 
 func TestBackup(t *testing.T) {
-	test_db, err := Open(test_file, true)
+	test_db, err := Open(test_file, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
