@@ -211,9 +211,12 @@ func (db DBU) Changed() bool {
 	return v != db.BackedUp
 }
 
-func Open(file, hook string, init bool) (DBU, error) {
-	sqlInit(DriverName, hook)
-	db, err := OpenSqlite(file, DriverName, true)
+func NewDBU(file string, init bool) (DBU, error) {
+	return NewDBUWithHook(file, "", init)
+}
+
+func NewDBUWithHook(file, hook string, init bool) (DBU, error) {
+	db, err := OpenWithHook(file, hook, init)
 	return DBU{DB: db}, err
 }
 
@@ -225,6 +228,7 @@ func Placeholders(n int) string {
 	}
 	return strings.Join(a, ",")
 }
+
 func CreateIfMissing(name, schema, hook string) DBU {
 	var fresh bool
 	var file string
@@ -236,7 +240,7 @@ func CreateIfMissing(name, schema, hook string) DBU {
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		fresh = true
 	}
-	db, err := Open(name, hook, true)
+	db, err := NewDBUWithHook(name, hook, true)
 	if err != nil {
 		panic(err)
 	}
@@ -435,8 +439,7 @@ func (db DBU) ObjectLoad(obj interface{}, extra string, args ...interface{}) (er
 	logger(query, args)
 	row := db.DB.QueryRow(query, args...)
 	dest := sPtrs(obj)
-	err = row.Scan(dest...)
-	return
+	return row.Scan(dest...)
 }
 
 func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (error, interface{}) {
@@ -767,4 +770,8 @@ func (db DBU) Version() (int64, error) {
 	var version int64
 	err := db.pragmatic("data_version", &version)
 	return version, err
+}
+
+func (d DBU) Exec(query string, args ...interface{}) (affected, last int64, err error) {
+	return Exec(d.DB, query, args...)
 }

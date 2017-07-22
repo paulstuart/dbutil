@@ -428,3 +428,12 @@ func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) erro
 func ColWriter(rows *sql.Rows) func(...interface{}) {
 	return nil
 }
+
+func Open(file string, init bool) (*sql.DB, error) {
+	return OpenWithHook(file, "", init)
+}
+
+// OpenWithHook ultimately should be multi db aware
+func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
+	return OpenSqliteWithHook(file, DriverName, hook, true)
+}

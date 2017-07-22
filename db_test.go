@@ -122,28 +122,28 @@ insert into iptest values(fromIPv4('192.168.1.1'));
 }
 
 func TestSqliteCreate(t *testing.T) {
-	test_db, err := Open(test_file, "", true)
+	db, err := NewDBU(test_file, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer test_db.DB.Close()
+	defer db.DB.Close()
 
 	sql := `
 	create table foo (id integer not null primary key, name text);
 	delete from foo;
 	`
-	_, err = test_db.DB.Exec(sql)
+	_, err = db.DB.Exec(sql)
 	if err != nil {
 		t.Logf("%q: %s\n", err, sql)
 		return
 	}
 
-	_, err = test_db.DB.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
+	_, err = db.DB.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := test_db.DB.Query("select id, name from foo")
+	rows, err := db.DB.Query("select id, name from foo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ = Open(test_file, "", true)
+	test_db, _ := NewDBU(test_file, true)
 	cnt, err := test_db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
@@ -167,7 +167,7 @@ func TestSqliteDelete(t *testing.T) {
 }
 
 func TestSqliteInsert(t *testing.T) {
-	test_db, _ = Open(test_file, "", true)
+	test_db, _ = NewDBU(test_file, true)
 	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
@@ -217,7 +217,7 @@ func TestHTML(t *testing.T) {
 }
 
 func TestObjects(t *testing.T) {
-	_, err := test_db.DB.Exec(struct_sql)
+	_, _, err := test_db.Exec(struct_sql)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,8 +434,9 @@ func prepare(db *sql.DB) {
 	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "hij", 42, "meaning of life")
 	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
 }
+
 func TestBackup(t *testing.T) {
-	test_db, err := Open(test_file, "", true)
+	test_db, err := NewDBU(test_file, true)
 	if err != nil {
 		t.Fatal(err)
 	}

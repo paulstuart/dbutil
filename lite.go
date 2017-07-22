@@ -146,9 +146,14 @@ func sqlInit(name, hook string) {
 		})
 }
 
+func OpenSqlite(file, name string, init bool) (*sql.DB, error) {
+	return OpenSqliteWithHook(file, name, "", init)
+}
+
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
-func OpenSqlite(file, name string, init bool) (*sql.DB, error) {
+func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
+	sqlInit(DriverName, hook)
 	full, err := url.Parse(file)
 	if err != nil {
 		return nil, err
