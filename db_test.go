@@ -425,7 +425,7 @@ func populate(db DBU) {
 	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
 }
 
-func TestBackup(t *testing.T) {
+func xTestBackup(t *testing.T) {
 	test_db, err := Open(test_file, "", true)
 	if err != nil {
 		t.Fatal(err)

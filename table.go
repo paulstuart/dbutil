@@ -1,9 +1,11 @@
 package dbutil
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -316,4 +318,43 @@ func (t *Table) Diff(reversed bool, cols ...string) *Table {
 		}
 	}
 	return delta
+}
+
+func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, error) {
+	t := Table{}
+	rows, err := conn.Query(query, args)
+	if err != nil {
+		return t, err
+	}
+	defer rows.Close()
+	t.Columns = rows.Columns()
+	buffer := make([]interface{}, len(t.Columns))
+	dest := make([]driver.Value, len(buffer))
+	for i := 0; i < len(buffer); i++ {
+		dest[i] = &buffer[i]
+	}
+	cnt := 0
+	for {
+		err := rows.Next(dest)
+		if err != nil {
+			if err != io.EOF {
+				return t, err
+			}
+			break
+		}
+		t.Rows = append(t.Rows, make(Row, len(buffer)))
+		for i, d := range dest {
+			switch d := d.(type) {
+			case []uint8:
+				t.Rows[cnt][i] = string(d)
+			case string:
+			case int64:
+				t.Rows[cnt][i] = fmt.Sprint(d)
+			default:
+				log.Printf("unexpected type %T", d)
+			}
+		}
+		cnt++
+	}
+	return t, nil
 }
