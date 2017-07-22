@@ -205,7 +205,7 @@ func DBVersion(file string) (uint64, error) {
 func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 	os.Remove(dest)
 
-	destDb, err := OpenSqlite(dest, "", true)
+	destDb, err := OpenSqlite(dest, DriverName, true)
 	if err != nil {
 		return err
 	}
@@ -214,11 +214,12 @@ func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 
 	fromDB := Filename(db)
 	toDB := Filename(destDb)
-	logger.Println("FROM:", fromDB)
-	logger.Println("TO  :", toDB)
 
 	from := registered(fromDB)
 	to := registered(toDB)
+
+	logger.Printf("FROM: %s (%v)\n", fromDB, from)
+	logger.Printf("TO  : %s (%v)\n", toDB, to)
 
 	bk, err := to.Backup("main", from, "main")
 	if err != nil {

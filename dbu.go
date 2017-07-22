@@ -203,42 +203,7 @@ func (db DBU) Filename() string {
 }
 
 func (db *DBU) Backup(dest string, logger *log.Logger) error {
-	os.Remove(dest)
-
-	v, _ := db.Version()
-	destDb, err := Open(dest, "", true)
-	if err != nil {
-		return err
-	}
-	defer destDb.DB.Close()
-	err = destDb.DB.Ping()
-
-	logger.Println("FROM:", db.Filename())
-	logger.Println("TO  :", destDb.Filename())
-
-	from := registered(db.Filename())
-	to := registered(destDb.Filename())
-
-	//bk, err := from.Backup("main", to, "main")
-	bk, err := to.Backup("main", from, "main")
-	if err != nil {
-		logger.Println("BACKUP ERR:", err)
-		return err
-	}
-
-	defer bk.Finish()
-	for {
-		logger.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
-		done, err := bk.Step(1024)
-		if err != nil {
-			return err
-		}
-		if done {
-			break
-		}
-	}
-	db.BackedUp = v
-	return err
+	return Backup(db.DB, dest, logger)
 }
 
 func (db DBU) Changed() bool {

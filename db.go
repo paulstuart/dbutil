@@ -275,7 +275,7 @@ func Constrained(err error) (table, column string) {
 	return
 }
 
-func GetRow(db *sql.DB, query string, args ...interface{}) ([]string, error) {
+func Row(db *sql.DB, query string, args ...interface{}) ([]string, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return []string{}, err

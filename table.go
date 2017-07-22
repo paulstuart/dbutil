@@ -16,7 +16,7 @@ type adjustment struct {
 	filter func(string) string
 }
 
-type Row []string
+type TableRow []string
 
 type HTMLLink struct {
 	Format  string
@@ -34,7 +34,7 @@ type LinkFunc func(string) bool
 
 type Table struct {
 	Columns  []string
-	Rows     []Row
+	Rows     []TableRow
 	Name     string           `json:"-"`
 	Sorting  []Sorted         `json:"-"`
 	Links    HTMLLinks        `json:"-"`
@@ -253,7 +253,7 @@ func inSet(i int, cols ...int) bool {
 	return false
 }
 
-func columns(r Row, cols ...int) []string {
+func columns(r TableRow, cols ...int) []string {
 	reply := make([]string, len(cols))
 	for i, col := range cols {
 		reply[i] = r[col]
@@ -274,7 +274,7 @@ func indicies(row []string, columns ...string) []int {
 	return indx
 }
 
-func (r Row) diff(prior Row, cols ...int) Row {
+func (r TableRow) diff(prior TableRow, cols ...int) TableRow {
 	reply := make([]string, len(r))
 	for i := range r {
 		switch {
@@ -294,13 +294,13 @@ func (r Row) diff(prior Row, cols ...int) Row {
 // generate table containing differences, cols are columns
 // that are ignored but retained, e.g., timestamps
 func (t *Table) Diff(reversed bool, cols ...string) *Table {
-	delta := &Table{Columns: append(cols, "field", "action"), Rows: []Row{}}
+	delta := &Table{Columns: append(cols, "field", "action"), Rows: []TableRow{}}
 	if t != nil {
 		indx := indicies(t.Columns, cols...)
-		last := Row{}
+		last := TableRow{}
 		for i, row := range t.Rows {
 			if i > 0 {
-				var diffs Row
+				var diffs TableRow
 				if reversed {
 					diffs = last.diff(row, indx...)
 				} else {
@@ -342,7 +342,7 @@ func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, erro
 			}
 			break
 		}
-		t.Rows = append(t.Rows, make(Row, len(buffer)))
+		t.Rows = append(t.Rows, make(TableRow, len(buffer)))
 		for i, d := range dest {
 			switch d := d.(type) {
 			case []uint8:
