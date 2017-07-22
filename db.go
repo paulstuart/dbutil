@@ -310,7 +310,7 @@ func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) e
 	return ErrNoRows
 }
 
-func Cmd(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
+func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
 		return 0, 0, fmt.Errorf("empty query")
@@ -423,4 +423,8 @@ func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) erro
 	fmt.Fprintln(w, "[")
 	defer fmt.Fprintln(w, "\n]")
 	return Stream(db, fn, query, args...)
+}
+
+func ColWriter(rows *sql.Rows) func(...interface{}) {
+	return nil
 }

@@ -336,7 +336,9 @@ func TestLoadMap(t *testing.T) {
 	}
 }
 
-func TestStream(t *testing.T) {
+func TestStreaming(t *testing.T) {
+	db, _ := OpenSqlite(test_file, "", true)
+	prepare(db)
 	myStream := func(columns []string, count int, buffer []interface{}) {
 		t.Log("STREAM COLS:", columns)
 		for _, b := range toString(buffer) {
@@ -344,7 +346,7 @@ func TestStream(t *testing.T) {
 		}
 	}
 	query := "select id,name,kind,modified from structs"
-	err := test_db.Stream(myStream, query)
+	err := Stream(db, myStream, query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,6 +427,13 @@ func populate(db DBU) {
 	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
 }
 
+func prepare(db *sql.DB) {
+	Exec(db, struct_sql)
+	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "abc", 23, "what ev er")
+	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "def", 69, "m'kay")
+	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "hij", 42, "meaning of life")
+	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
+}
 func TestBackup(t *testing.T) {
 	test_db, err := Open(test_file, "", true)
 	if err != nil {
