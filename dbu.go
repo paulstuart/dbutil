@@ -2,7 +2,6 @@ package dbutil
 
 import (
 	"database/sql"
-	"encoding/csv"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -494,52 +493,15 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 
 func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args ...interface{}) error {
 	logger(query, args)
-	rows, err := db.DB.Query(query, args...)
-	if err != nil {
-		return err
-	}
-	columns, err := rows.Columns()
-	if err != nil {
-		return err
-	}
-	buffer := make([]interface{}, len(columns))
-	dest := make([]interface{}, len(columns))
-	for i := 0; i < len(buffer); i++ {
-		dest[i] = &buffer[i]
-	}
-	i := 0
-	for rows.Next() {
-		err = rows.Scan(dest...)
-		if err != nil {
-			fmt.Println("BAD SCAN:", rows)
-		}
-		fn(columns, i, buffer)
-		i++
-	}
-	rows.Close()
-	return err
+	return Stream(db.DB, fn, query, args...)
 }
 
 func (db DBU) StreamCSV(w io.Writer, query string, args ...interface{}) error {
-	cw := csv.NewWriter(w)
-	fn := func(columns []string, count int, buffer []interface{}) {
-		if count == 0 {
-			cw.Write(columns)
-		}
-		cw.Write(toString(buffer))
-	}
-	defer cw.Flush()
-	return db.Stream(fn, query, args...)
+	return StreamCSV(db.DB, w, query, args...)
 }
 
 func (db DBU) StreamTab(w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}) {
-		if count == 0 {
-			fmt.Fprintln(w, strings.Join(columns, "\t"))
-		}
-		fmt.Fprintln(w, strings.Join(toString(buffer), "\t"))
-	}
-	return db.Stream(fn, query, args...)
+	return StreamTab(db.DB, w, query, args...)
 }
 
 func isNumber(s string) bool {
@@ -551,29 +513,7 @@ func isNumber(s string) bool {
 }
 
 func (db DBU) StreamJSON(w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}) {
-		if count > 0 {
-			fmt.Fprintln(w, ",")
-		}
-		fmt.Fprintln(w, "  {")
-		repl := strings.NewReplacer("\n", "\\\\n", "\t", "\\\\t", "\r", "\\\\r", `"`, `\"`)
-		for i, s := range toString(buffer) {
-			comma := ",\n"
-			if i >= len(buffer)-1 {
-				comma = "\n"
-			}
-			if isNumber(s) {
-				fmt.Fprintf(w, `    "%s": %s%s`, columns[i], s, comma)
-			} else {
-				s = repl.Replace(s)
-				fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
-			}
-		}
-		fmt.Fprint(w, "  }")
-	}
-	fmt.Fprintln(w, "[")
-	defer fmt.Fprintln(w, "\n]")
-	return db.Stream(fn, query, args...)
+	return StreamJSON(db.DB, w, query, args...)
 }
 
 func (db DBU) StreamObjects(w io.Writer, o DBObject) error {

@@ -2,8 +2,9 @@ package dbutil
 
 import (
 	"database/sql"
-	"errors"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"reflect"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -271,4 +273,154 @@ func Constrained(err error) (table, column string) {
 		}
 	}
 	return
+}
+
+func GetRow(db *sql.DB, query string, args ...interface{}) ([]string, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return []string{}, err
+	}
+	defer rows.Close()
+	cols, _ := rows.Columns()
+	buff := make([]interface{}, len(cols))
+	dest := make([]interface{}, len(cols))
+	for rows.Next() {
+		for i := range cols {
+			dest[i] = &(buff[i])
+		}
+		err = rows.Scan(dest...)
+		return toString(buff), err
+	}
+	return []string{}, ErrNoRows
+}
+
+func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) error {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return errors.Wrapf(err, "error on query: %s -- %v", query, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err = rows.Scan(members...)
+		if err != nil {
+			return errors.Wrapf(err, "scan error: %v query: %s args: %v", err, query, args)
+		}
+		return nil
+	}
+	return ErrNoRows
+}
+
+func Cmd(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
+	query = strings.TrimSpace(query)
+	if 0 == len(query) {
+		return 0, 0, fmt.Errorf("empty query")
+	}
+	var i sql.Result
+	if i, err = db.Exec(query, args...); err != nil {
+		return 0, 0, err
+	}
+	affected, _ = i.RowsAffected()
+	last, _ = i.LastInsertId()
+	return affected, last, nil
+}
+
+func Run(db *sql.DB, query string, insert bool, args ...interface{}) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	defer stmt.Close()
+	result, err := stmt.Exec(args...)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	var i int64
+	if insert {
+		i, err = result.LastInsertId()
+	} else {
+		i, err = result.RowsAffected()
+	}
+	tx.Commit()
+	return i, err
+}
+
+func Stream(db *sql.DB, fn func([]string, int, []interface{}), query string, args ...interface{}) error {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	buffer := make([]interface{}, len(columns))
+	dest := make([]interface{}, len(columns))
+	for i := 0; i < len(buffer); i++ {
+		dest[i] = &buffer[i]
+	}
+	i := 0
+	for rows.Next() {
+		err = rows.Scan(dest...)
+		if err != nil {
+			log.Println("BAD SCAN:", rows)
+		}
+		fn(columns, i, buffer)
+		i++
+	}
+	rows.Close()
+	return err
+}
+
+func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+	cw := csv.NewWriter(w)
+	fn := func(columns []string, count int, buffer []interface{}) {
+		if count == 0 {
+			cw.Write(columns)
+		}
+		cw.Write(toString(buffer))
+	}
+	defer cw.Flush()
+	return Stream(db, fn, query, args...)
+}
+
+func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+	fn := func(columns []string, count int, buffer []interface{}) {
+		if count == 0 {
+			fmt.Fprintln(w, strings.Join(columns, "\t"))
+		}
+		fmt.Fprintln(w, strings.Join(toString(buffer), "\t"))
+	}
+	return Stream(db, fn, query, args...)
+}
+
+func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+	fn := func(columns []string, count int, buffer []interface{}) {
+		if count > 0 {
+			fmt.Fprintln(w, ",")
+		}
+		fmt.Fprintln(w, "  {")
+		repl := strings.NewReplacer("\n", "\\\\n", "\t", "\\\\t", "\r", "\\\\r", `"`, `\"`)
+		for i, s := range toString(buffer) {
+			comma := ",\n"
+			if i >= len(buffer)-1 {
+				comma = "\n"
+			}
+			if isNumber(s) {
+				fmt.Fprintf(w, `    "%s": %s%s`, columns[i], s, comma)
+			} else {
+				s = repl.Replace(s)
+				fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
+			}
+		}
+		fmt.Fprint(w, "  }")
+	}
+	fmt.Fprintln(w, "[")
+	defer fmt.Fprintln(w, "\n]")
+	return Stream(db, fn, query, args...)
 }

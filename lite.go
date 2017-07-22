@@ -201,3 +201,55 @@ func DBVersion(file string) (uint64, error) {
 	a += uint64(b[3])
 	return a, nil
 }
+
+func Backup(db *sql.DB, dest string, logger *log.Logger) error {
+	os.Remove(dest)
+
+	destDb, err := OpenSqlite(dest, "", true)
+	if err != nil {
+		return err
+	}
+	defer destDb.Close()
+	err = destDb.Ping()
+
+	fromDB := Filename(db)
+	toDB := Filename(destDb)
+	logger.Println("FROM:", fromDB)
+	logger.Println("TO  :", toDB)
+
+	from := registered(fromDB)
+	to := registered(toDB)
+
+	bk, err := to.Backup("main", from, "main")
+	if err != nil {
+		logger.Println("BACKUP ERR:", err)
+		return err
+	}
+
+	defer bk.Finish()
+	for {
+		logger.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
+		done, err := bk.Step(1024)
+		if err != nil {
+			return err
+		}
+		if done {
+			break
+		}
+	}
+	return err
+}
+
+func Filename(db *sql.DB) string {
+	buff := make([]string, 3)
+	dest := slptr(buff)
+	if err := Pragmatic(db, "database_list", dest...); err != nil {
+		return "filename error:" + err.Error()
+	}
+	return buff[2]
+}
+
+func Pragmatic(db *sql.DB, pragma string, dest ...interface{}) error {
+	row := db.QueryRow("PRAGMA " + pragma)
+	return row.Scan(dest...)
+}
