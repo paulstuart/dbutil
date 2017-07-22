@@ -115,7 +115,7 @@ func fromIPv4(ip string) int64 {
 // because there's no way to have multiple instances open associate the connection with the DSN
 //
 // Since our use case is to normally have one instance open this should be workable for now
-func sqlInit(hook string) {
+func sqlInit(name, hook string) {
 	imu.Lock()
 	defer imu.Unlock()
 	if initialized {
@@ -123,7 +123,7 @@ func sqlInit(hook string) {
 	}
 	initialized = true
 
-	sql.Register("dbutil",
+	sql.Register(name,
 		&sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 				if err := conn.RegisterFunc("iptoa", toIPv4, true); err != nil {
@@ -148,8 +148,7 @@ func sqlInit(hook string) {
 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
-//func OpenSqlite(file, driver, hook string, init bool) (*sql.DB, error) {
-func OpenSqlite(file string, init bool) (*sql.DB, error) {
+func OpenSqlite(file, name string, init bool) (*sql.DB, error) {
 	full, err := url.Parse(file)
 	if err != nil {
 		return nil, err
@@ -163,7 +162,10 @@ func OpenSqlite(file string, init bool) (*sql.DB, error) {
 			f.Close()
 		}
 	}
-	db, err := sql.Open("sqlite3", file)
+	if len(name) == 0 {
+		name = "sqlite3"
+	}
+	db, err := sql.Open(name, file)
 	if err == nil {
 		return db, db.Ping()
 	}

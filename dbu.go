@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+const (
+	DriverName = "dbutil"
+)
+
 type DBU struct {
 	BackedUp int64
 	DB       *sql.DB
@@ -244,10 +248,8 @@ func (db DBU) Changed() bool {
 }
 
 func Open(file, hook string, init bool) (DBU, error) {
-	if len(hook) > 0 {
-		sqlInit(hook)
-	}
-	db, err := OpenSqlite(file, true)
+	sqlInit(DriverName, hook)
+	db, err := OpenSqlite(file, DriverName, true)
 	return DBU{DB: db}, err
 }
 
