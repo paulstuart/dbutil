@@ -16,6 +16,11 @@ const (
 	DriverName = "dbutil"
 )
 
+var (
+	ErrNoKeyField = fmt.Errorf("table has no key field")
+	ErrKeyMissing = fmt.Errorf("key is not set")
+)
+
 type DBU struct {
 	BackedUp int64
 	DB       *sql.DB
@@ -227,29 +232,6 @@ func Placeholders(n int) string {
 		a[i] = "?"
 	}
 	return strings.Join(a, ",")
-}
-
-func CreateIfMissing(name, schema, hook string) DBU {
-	var fresh bool
-	var file string
-	if strings.HasPrefix(name, "file://") {
-		file = name[7:]
-	} else {
-		file = name
-	}
-	if _, err := os.Stat(file); os.IsNotExist(err) {
-		fresh = true
-	}
-	db, err := NewDBUWithHook(name, hook, true)
-	if err != nil {
-		panic(err)
-	}
-	if fresh {
-		if err = db.File(schema); err != nil {
-			panic(err)
-		}
-	}
-	return db
 }
 
 func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
@@ -546,23 +528,9 @@ func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) inter
 	return themap.Interface()
 }
 
-func (db DBU) Row(Query string, args ...interface{}) ([]string, error) {
-	rows, err := db.DB.Query(Query, args...)
-	if err != nil {
-		return []string{}, err
-	}
-	defer rows.Close()
-	cols, _ := rows.Columns()
-	buff := make([]interface{}, len(cols))
-	dest := make([]interface{}, len(cols))
-	for rows.Next() {
-		for i := range cols {
-			dest[i] = &(buff[i])
-		}
-		err = rows.Scan(dest...)
-		return toString(buff), err
-	}
-	return []string{}, ErrNoRows
+func (db DBU) Row(query string, args ...interface{}) ([]string, error) {
+	logger(query, args)
+	return Row(db.DB, query, args...)
 }
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
@@ -582,7 +550,7 @@ func (db DBU) Get(members []interface{}, query string, args ...interface{}) erro
 		}
 		return nil
 	}
-	return ErrNoRows
+	return nil
 }
 
 func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
@@ -730,13 +698,6 @@ func (db DBU) pragmatic(pragma string, dest ...interface{}) error {
 
 func (db DBU) Pragma(pragma string) (string, error) {
 	var status string
-	/*
-			if debugging() {
-				log.Println("PRAGMA ", pragma)
-			}
-		row := db.DB.QueryRow("PRAGMA " + pragma)
-		err := row.Scan(&status)
-	*/
 	err := db.pragmatic(pragma, &status)
 	return status, err
 }

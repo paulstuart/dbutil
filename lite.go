@@ -11,8 +11,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
+)
+
+var (
+	rmu, imu sync.Mutex
 )
 
 // N/A, impacts db, or multi-column -- ignore for now

@@ -17,11 +17,7 @@ import (
 )
 
 var (
-	mu, rmu, imu sync.Mutex
-
-	ErrNoKeyField = errors.New("table has no key field")
-	ErrKeyMissing = errors.New("key is not set")
-	ErrNoRows     = errors.New("no rows found")
+	mu sync.Mutex
 )
 
 func Debug(on bool) {
@@ -291,7 +287,7 @@ func Row(db *sql.DB, query string, args ...interface{}) ([]string, error) {
 		err = rows.Scan(dest...)
 		return toString(buff), err
 	}
-	return []string{}, ErrNoRows
+	return []string{}, nil
 }
 
 func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) error {
@@ -307,7 +303,7 @@ func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) e
 		}
 		return nil
 	}
-	return ErrNoRows
+	return nil
 }
 
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
