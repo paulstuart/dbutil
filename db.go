@@ -310,6 +310,11 @@ func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) e
 	return ErrNoRows
 }
 
+func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
+	last, _, err := Exec(db, query, args...)
+	return last, err
+}
+
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
