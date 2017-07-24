@@ -360,13 +360,13 @@ func Stream(db *sql.DB, fn func([]string, int, []interface{}), query string, arg
 	if err != nil {
 		return err
 	}
-	buffer := make([]interface{}, len(columns))
-	dest := make([]interface{}, len(columns))
-	for i := 0; i < len(buffer); i++ {
-		dest[i] = &buffer[i]
-	}
 	i := 0
 	for rows.Next() {
+		buffer := make([]interface{}, len(columns))
+		dest := make([]interface{}, len(columns))
+		for k := 0; k < len(buffer); k++ {
+			dest[k] = &buffer[k]
+		}
 		err = rows.Scan(dest...)
 		if err != nil {
 			log.Println("BAD SCAN:", rows)
@@ -437,4 +437,23 @@ func Open(file string, init bool) (*sql.DB, error) {
 // OpenWithHook ultimately should be multi db aware
 func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
 	return OpenSqliteWithHook(file, DriverName, hook, true)
+}
+
+func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
+	c := make(chan []interface{})
+	fn := func(columns []string, row int, values []interface{}) {
+		c <- values
+	}
+	iter := func() ([]interface{}, bool) {
+		values, ok := <-c
+		return values, ok
+	}
+	go func() {
+		if err := Stream(db, fn, query); err != nil {
+			panic(err)
+		}
+		close(c)
+	}()
+
+	return iter
 }
