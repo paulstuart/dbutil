@@ -585,16 +585,6 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = 1;
 
 `
-
-	create_hammer = `
-create table hammer (
-	id integer primary key,
-	worker int,
-	counter int,
-	ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-)`
-	delete_hammer = `drop table if exists hammer`
-
 	insert_hammer = `insert into hammer (worker, counter) values (?,?)`
 )
 
@@ -603,7 +593,7 @@ func hammer(t *testing.T, workers, count int) {
 
 	var wg sync.WaitGroup
 
-	db, err := hammerDB()
+	db, err := hammerDB("")
 	if err != nil {
 		t.Error(err)
 		return
@@ -634,18 +624,15 @@ func TestHammer(t *testing.T) {
 	hammer(t, 4, 100000)
 }
 
-func hammerDB() (*sql.DB, error) {
-	db, err := OpenSqlite("hammer.db", "", true)
+func hammerDB(name string) (*sql.DB, error) {
+	if name == "" {
+		name = "hammer.db"
+	}
+	db, err := OpenSqlite(name, "", true)
 	if err == nil {
 		return db, Commands(db, hammer_time, false)
 	}
 	return nil, err
-
-	if db, err := OpenSqlite("hammer.db", "", true); err == nil {
-		return db, Commands(db, hammer_time, true)
-	} else {
-		return nil, err
-	}
 }
 
 func TestPragmas(t *testing.T) {
@@ -671,7 +658,7 @@ func errLogger(t *testing.T) chan error {
 }
 
 func TestServer(t *testing.T) {
-	db, err := hammerDB()
+	db, err := hammerDB("")
 	if err != nil {
 		t.Error(err)
 		return
@@ -728,5 +715,45 @@ func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
 	t.Log("battered")
 }
 
-/*
- */
+func TestInserter(t *testing.T) {
+	db, err := hammerDB("bulk.db")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	fn := func(err error) {
+		t.Log(err)
+	}
+	inserter, err := NewInserter(db, 4096, fn, insert_hammer)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	slam(t, inserter, 100, 1000000)
+}
+
+func slam(t *testing.T, inserter *Inserter, workers, count int) {
+	t.Logf("slamming %d workers for %d iterations\n", workers, count)
+	var wg sync.WaitGroup
+
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for cnt := range queue {
+				inserter.Insert(worker, cnt)
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	i := inserter.Close()
+	t.Logf("last: %d\n", i)
+}

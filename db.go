@@ -351,6 +351,66 @@ func Run(db *sql.DB, query string, insert bool, args ...interface{}) (int64, err
 	return i, err
 }
 
+type Inserter struct {
+	db   *sql.DB
+	args chan []interface{}
+	last chan int64
+}
+
+func (i *Inserter) Insert(args ...interface{}) {
+	i.args <- args
+}
+
+func (i *Inserter) Close() int64 {
+	close(i.args)
+	last := <-i.last
+	return last
+}
+
+func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ...interface{}) (*Inserter, error) {
+
+	c := make(chan []interface{}, queue)
+	last := make(chan int64)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	go func() {
+		var result sql.Result
+		for values := range c {
+			result, err = stmt.Exec(values...)
+			if err != nil {
+				tx.Rollback()
+				if errFn != nil {
+					errFn(err)
+				}
+				break
+			}
+		}
+		i, err := result.LastInsertId()
+		if errFn != nil {
+			errFn(err)
+		}
+
+		if err := tx.Commit(); err != nil && errFn != nil {
+			errFn(err)
+		}
+		stmt.Close()
+		last <- i
+	}()
+
+	return &Inserter{
+		args: c,
+		last: last,
+	}, nil
+}
+
 func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -547,35 +607,4 @@ func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 	}()
 	wg.Wait()
 	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-}
-
-func xServer(db *sql.DB, r chan Query, w chan Action) {
-	var wg sync.WaitGroup
-	var mu sync.RWMutex
-	wg.Add(1)
-	go func() {
-		for q := range r {
-			//fmt.Println("READ:", q.Query)
-			mu.RLock()
-			if err := Stream(db, q.Reply, q.Query, q.Args...); err != nil {
-				fmt.Printf("Steam error: %v\n", err)
-			}
-			mu.RUnlock()
-		}
-		wg.Done()
-	}()
-	wg.Add(1)
-	go func() {
-		for q := range w {
-			//fmt.Printf("Q: %s A: %v\n", q.Query, q.Args)
-			mu.Lock()
-			affected, last, err := Exec(db, q.Query, q.Args...)
-			q.Callback(affected, last, err)
-			mu.Unlock()
-		}
-		wg.Done()
-	}()
-	wg.Wait()
-	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	fmt.Println("server exited")
 }
