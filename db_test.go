@@ -479,7 +479,7 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 		return
 	}
 	prepare(db)
-	query := "select id,name,kind,modified from structs"
+	query := "select id,name,kind,modified from structs where id > 0"
 
 	if _, err := db.Query(query); err != nil {
 		b.Error(err)
@@ -503,6 +503,45 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 	}
 }
 
+func BenchmarkQueryPrepared(b *testing.B) {
+	db, err := OpenSqlite(test_file, "", true)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	prepare(db)
+	query := "select id,name,kind,modified from structs where id > ?"
+
+	tx, err := db.Begin()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		b.Error(err)
+		return
+	}
+	defer stmt.Close()
+
+	queryPrepared := func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			rows, err := stmt.Query(0)
+			if err != nil {
+				b.Error(err)
+				break
+			}
+			rows.Close()
+		}
+	}
+
+	b.ResetTimer()
+	b.Run("prepared", queryPrepared)
+	if err := db.Close(); err != nil {
+		b.Error(err)
+	}
+}
 func sink(args ...interface{}) {
 	//log.Printf("args: %v\n", args)
 }
@@ -512,59 +551,23 @@ var (
 	blah = []string{}
 )
 
-/*
-func init() {
-	var err error
-	dbs, err = OpenSqlite("stest.db", "", true)
-	if err != nil {
-		panic(err)
-	}
-	prepare(dbs)
-}
-*/
-
 func nullStream(columns []string, count int, buffer []interface{}, err error) {
 	for _, buf := range toString(buffer) {
-		// sink(buf)
 		blah = append(blah, buf)
 	}
-	//log.Println("LEN BUF:", len(blah))
 }
 
 func BenchmarkStreaming(b *testing.B) {
-	if err := Stream(dbs, nullStream, default_query); err != nil {
-		b.Error(err)
-	}
-}
-
-func xxBenchmarkStreaming(b *testing.B) {
-	stream := func(b *testing.B) {
-		if err := Stream(dbs, nullStream, default_query); err != nil {
-			b.Error(err)
-		}
-	}
-	b.Run("stream", stream)
-}
-
-func xBenchmarkQueryAdHoc(b *testing.B) {
-	b.Log("open db")
-	db, err := OpenSqlite(test_file, "", true)
+	dbs, err := OpenSqlite("stest.db", "", true)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	b.Log("prepare db")
-	prepare(db)
-	query := "select id,name,kind,modified from structs"
-	b.Log("reset timer")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := db.Query(query); err != nil {
-			b.Error(err)
-			break
-		}
+	prepare(dbs)
+
+	if err := Stream(dbs, nullStream, default_query); err != nil {
+		b.Error(err)
 	}
-	db.Close()
 }
 
 const (
