@@ -439,6 +439,8 @@ func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
 	return OpenSqliteWithHook(file, DriverName, hook, true)
 }
 
+type Iterator func() (values []interface{}, ok bool)
+
 func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
 	c := make(chan []interface{})
 	fn := func(columns []string, row int, values []interface{}) {
@@ -456,4 +458,56 @@ func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interfac
 	}()
 
 	return iter
+}
+
+type MetaData struct {
+	Column string
+	Type   reflect.Type
+}
+
+func Streamer(db *sql.DB, query string, args ...interface{}) ([]MetaData, Iterator, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	columns, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, nil, err
+	}
+	t2 := reflect.TypeOf("")
+	log.Printf("TESTING: SCAN TYPE: %v (%T)\n", t2, t2)
+	meta := make([]MetaData, 0, len(columns))
+	for _, c := range columns {
+		//log.Printf("META: %+v\n", c)
+		t := c.ScanType()
+		log.Printf("COL: %s, SCAN TYPE: %v (%T)\n", c.Name(), t, t)
+		m := MetaData{
+			Column: c.Name(),
+			Type:   c.ScanType(),
+		}
+		meta = append(meta, m)
+	}
+
+	c := make(chan []interface{})
+	iter := func() ([]interface{}, bool) {
+		values, ok := <-c
+		return values, ok
+	}
+	go func() {
+		for rows.Next() {
+			buffer := make([]interface{}, len(columns))
+			dest := make([]interface{}, len(columns))
+			for k := 0; k < len(buffer); k++ {
+				dest[k] = &buffer[k]
+			}
+			err = rows.Scan(dest...)
+			if err != nil {
+				log.Println("BAD SCAN:", rows)
+			}
+			c <- buffer
+		}
+		rows.Close()
+		close(c)
+	}()
+	return meta, iter, nil
 }

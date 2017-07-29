@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -161,13 +162,13 @@ func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 	sqlInit(DriverName, hook)
 	full, err := url.Parse(file)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "parse file: %s", file)
 	}
 	filename := full.Path
 	if init {
 		os.Mkdir(path.Dir(filename), 0777)
 		if f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "os file: %s", file)
 		} else {
 			f.Close()
 		}
@@ -176,10 +177,10 @@ func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 		name = "sqlite3"
 	}
 	db, err := sql.Open(name, file)
-	if err == nil {
-		return db, db.Ping()
+	if err != nil {
+		return db, errors.Wrapf(err, "sql file: %s", file)
 	}
-	return db, err
+	return db, db.Ping()
 }
 
 // get filename of db

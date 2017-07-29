@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+const (
+	default_query = "select id,name,kind,modified from structs"
+)
+
 var (
 	test_db   DBU
 	test_file = "test.db"
@@ -78,12 +82,12 @@ func (s *testStruct) ModifiedBy(u int64, t time.Time) {
 }
 
 const struct_sql = `create table if not exists structs (
-        id integer not null primary key,
-        name text,
-        kind int,
-        data blob,
-        modified   DATETIME DEFAULT CURRENT_TIMESTAMP
-    );`
+    id integer not null primary key,
+    name text,
+    kind int,
+    data blob,
+    modified   DATETIME DEFAULT CURRENT_TIMESTAMP
+);`
 
 type testMap map[int64]testStruct
 
@@ -419,14 +423,6 @@ func (w *twriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func populate(db DBU) {
-	db.Update(struct_sql)
-	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "abc", 23, "what ev er")
-	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "def", 69, "m'kay")
-	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "hij", 42, "meaning of life")
-	db.Insert("insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
-}
-
 func prepare(db *sql.DB) {
 	Exec(db, struct_sql)
 	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "abc", 23, "what ev er")
@@ -442,7 +438,7 @@ func TestBackup(t *testing.T) {
 	}
 	defer test_db.DB.Close()
 
-	populate(test_db)
+	prepare(test_db.DB)
 	v1, _ := test_db.Version()
 	t.Log("Version prior to backup:", v1)
 	t.Log("Backed up:", test_db.BackedUp)
@@ -473,4 +469,97 @@ func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
 		t.Log(args...)
 	}
 	rows.Close()
+}
+
+func BenchmarkQueryAdHoc(b *testing.B) {
+	db, err := OpenSqlite(test_file, "", true)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	prepare(db)
+	query := "select id,name,kind,modified from structs"
+
+	if _, err := db.Query(query); err != nil {
+		b.Error(err)
+		return
+	}
+	queryAdHoc := func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			rows, err := db.Query(query)
+			if err != nil {
+				b.Error(err)
+				break
+			}
+			rows.Close()
+		}
+	}
+
+	b.ResetTimer()
+	b.Run("adhoc", queryAdHoc)
+	if err := db.Close(); err != nil {
+		b.Error(err)
+	}
+}
+
+func sink(args ...interface{}) {
+	//log.Printf("args: %v\n", args)
+}
+
+var (
+	dbs  *sql.DB
+	blah = []string{}
+)
+
+func init() {
+	var err error
+	dbs, err = OpenSqlite("stest.db", "", true)
+	if err != nil {
+		panic(err)
+	}
+	prepare(dbs)
+}
+
+func nullStream(columns []string, count int, buffer []interface{}) {
+	for _, buf := range toString(buffer) {
+		// sink(buf)
+		blah = append(blah, buf)
+	}
+	//log.Println("LEN BUF:", len(blah))
+}
+
+func BenchmarkStreaming(b *testing.B) {
+	if err := Stream(dbs, nullStream, default_query); err != nil {
+		b.Error(err)
+	}
+}
+
+func xxBenchmarkStreaming(b *testing.B) {
+	stream := func(b *testing.B) {
+		if err := Stream(dbs, nullStream, default_query); err != nil {
+			b.Error(err)
+		}
+	}
+	b.Run("stream", stream)
+}
+
+func xBenchmarkQueryAdHoc(b *testing.B) {
+	b.Log("open db")
+	db, err := OpenSqlite(test_file, "", true)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	b.Log("prepare db")
+	prepare(db)
+	query := "select id,name,kind,modified from structs"
+	b.Log("reset timer")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := db.Query(query); err != nil {
+			b.Error(err)
+			break
+		}
+	}
+	db.Close()
 }
