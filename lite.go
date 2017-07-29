@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -264,4 +266,66 @@ func Filename(db *sql.DB) string {
 func Pragmatic(db *sql.DB, pragma string, dest ...interface{}) error {
 	row := db.QueryRow("PRAGMA " + pragma)
 	return row.Scan(dest...)
+}
+
+func Pragmas(db *sql.DB, w io.Writer) {
+	for _, pragma := range pragmas {
+		row := db.QueryRow("PRAGMA " + pragma)
+		var value string
+		row.Scan(&value)
+		fmt.Fprintf(w, "pragma %s = %s\n", pragma, value)
+	}
+}
+
+// File emulate ".read FILENAME"
+func File(db *sql.DB, file string, echo bool) error {
+	out, err := ioutil.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	return Commands(db, string(out), echo)
+}
+
+// Commands emulates the client reading a series of commands
+func Commands(db *sql.DB, buffer string, echo bool) error {
+	// strip comments
+	clean := c_comment.ReplaceAll([]byte(buffer), []byte{})
+	clean = sql_comment.ReplaceAll(clean, []byte{})
+	clean = readline.ReplaceAll(clean, []byte("${1};")) // .read gets a fake ';' to split on
+	lines := strings.Split(string(clean), ";")
+	multiline := "" // triggers are multiple lines
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if 0 == len(line) {
+			continue
+		}
+		if echo {
+			fmt.Println(line)
+		}
+		if strings.HasPrefix(line, ".read ") {
+			name := strings.TrimSpace(line[7:])
+			if err := File(db, name, echo); err != nil {
+				return errors.Wrapf(err, "read file: %s", name)
+			}
+			continue
+		} else if strings.HasPrefix(line, ".print ") {
+			fmt.Println(strings.Trim(strings.TrimSpace(line[7:]), "'"))
+			continue
+		} else if startsWith(line, "CREATE TRIGGER") {
+			multiline = line
+			continue
+		} else if startsWith(line, "END") {
+			line = multiline + ";\n" + line
+			multiline = ""
+		} else if len(multiline) > 0 {
+			multiline += ";\n" + line // restore our 'split' transaction
+			continue
+		}
+		if _, err := db.Exec(line); err != nil {
+			return errors.Wrapf(err, "EXEC QUERY: %s FILE: %s", line, Filename(db))
+		} else if debugging() {
+			log.Println("QUERY:", line)
+		}
+	}
+	return nil
 }

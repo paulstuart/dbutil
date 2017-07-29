@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"sync"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -343,7 +344,7 @@ func TestLoadMap(t *testing.T) {
 func TestStreaming(t *testing.T) {
 	db, _ := OpenSqlite(test_file, "", true)
 	prepare(db)
-	myStream := func(columns []string, count int, buffer []interface{}) {
+	myStream := func(columns []string, count int, buffer []interface{}, err error) {
 		t.Log("STREAM COLS:", columns)
 		for _, b := range toString(buffer) {
 			t.Log("STREAM V:", b)
@@ -511,6 +512,7 @@ var (
 	blah = []string{}
 )
 
+/*
 func init() {
 	var err error
 	dbs, err = OpenSqlite("stest.db", "", true)
@@ -519,8 +521,9 @@ func init() {
 	}
 	prepare(dbs)
 }
+*/
 
-func nullStream(columns []string, count int, buffer []interface{}) {
+func nullStream(columns []string, count int, buffer []interface{}, err error) {
 	for _, buf := range toString(buffer) {
 		// sink(buf)
 		blah = append(blah, buf)
@@ -563,3 +566,167 @@ func xBenchmarkQueryAdHoc(b *testing.B) {
 	}
 	db.Close()
 }
+
+const (
+	hammer_time = `
+drop table if exists hammer;
+
+create table hammer (
+	id integer primary key,
+	worker int,
+	counter int,
+	ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+pragma cache_size= 10485760;
+
+PRAGMA journal_mode = WAL;
+
+PRAGMA synchronous = 1;
+
+`
+
+	create_hammer = `
+create table hammer (
+	id integer primary key,
+	worker int,
+	counter int,
+	ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+)`
+	delete_hammer = `drop table if exists hammer`
+
+	insert_hammer = `insert into hammer (worker, counter) values (?,?)`
+)
+
+//func hammer(db *sql.DB, workers, seconds int, query string, args ...interface{}) {
+func hammer(t *testing.T, workers, count int) {
+
+	var wg sync.WaitGroup
+
+	db, err := hammerDB()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	Pragmas(db, os.Stdout)
+
+	queue := make(chan int, count)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Log("worker:", worker)
+			for cnt := range queue {
+				if _, err := db.Exec(insert_hammer, worker, cnt); err != nil {
+					t.Errorf("worker:%d count:%d, error:%s\n", worker, cnt, err.Error())
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+}
+
+func TestHammer(t *testing.T) {
+	hammer(t, 4, 100000)
+}
+
+func hammerDB() (*sql.DB, error) {
+	db, err := OpenSqlite("hammer.db", "", true)
+	if err == nil {
+		return db, Commands(db, hammer_time, false)
+	}
+	return nil, err
+
+	if db, err := OpenSqlite("hammer.db", "", true); err == nil {
+		return db, Commands(db, hammer_time, true)
+	} else {
+		return nil, err
+	}
+}
+
+func TestPragmas(t *testing.T) {
+	db, err := OpenSqlite("hammer.db", "", true)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if err := Commands(db, hammer_time, true); err != nil {
+		t.Error(err)
+	}
+	Pragmas(db, os.Stdout)
+}
+
+func errLogger(t *testing.T) chan error {
+	e := make(chan error, 4096)
+	go func() {
+		for err := range e {
+			t.Error(err)
+		}
+	}()
+	return e
+}
+
+func TestServer(t *testing.T) {
+	db, err := hammerDB()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	r := make(chan Query, 4096)
+	w := make(chan Action, 4096)
+	e := errLogger(t)
+	go Server(db, r, w, e)
+	batter(t, r, w, 10, 1000000)
+	close(r)
+	close(w)
+	close(e)
+}
+
+/*
+	reader := func(columns []string, row int, values []interface{}, err error) {
+		if row == 0 {
+			t.Log(columns)
+		}
+	}
+*/
+
+func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
+
+	var wg sync.WaitGroup
+
+	response := func(affected, last int64, err error) {
+		//	t.Logf("aff:%d last:%d err:%v\n", affected, last, err)
+		wg.Done()
+	}
+
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for cnt := range queue {
+				wg.Add(1)
+				w <- Action{
+					Query:    insert_hammer,
+					Args:     []interface{}{worker, cnt},
+					Callback: response,
+				}
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	t.Log("battered")
+}
+
+/*
+ */

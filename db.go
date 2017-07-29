@@ -351,7 +351,7 @@ func Run(db *sql.DB, query string, insert bool, args ...interface{}) (int64, err
 	return i, err
 }
 
-func Stream(db *sql.DB, fn func([]string, int, []interface{}), query string, args ...interface{}) error {
+func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
@@ -371,7 +371,7 @@ func Stream(db *sql.DB, fn func([]string, int, []interface{}), query string, arg
 		if err != nil {
 			log.Println("BAD SCAN:", rows)
 		}
-		fn(columns, i, buffer)
+		fn(columns, i, buffer, err)
 		i++
 	}
 	rows.Close()
@@ -380,7 +380,7 @@ func Stream(db *sql.DB, fn func([]string, int, []interface{}), query string, arg
 
 func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
 	cw := csv.NewWriter(w)
-	fn := func(columns []string, count int, buffer []interface{}) {
+	fn := func(columns []string, count int, buffer []interface{}, err error) {
 		if count == 0 {
 			cw.Write(columns)
 		}
@@ -391,7 +391,7 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 }
 
 func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}) {
+	fn := func(columns []string, count int, buffer []interface{}, err error) {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
@@ -401,7 +401,7 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 }
 
 func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}) {
+	fn := func(columns []string, count int, buffer []interface{}, err error) {
 		if count > 0 {
 			fmt.Fprintln(w, ",")
 		}
@@ -443,7 +443,7 @@ type Iterator func() (values []interface{}, ok bool)
 
 func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
 	c := make(chan []interface{})
-	fn := func(columns []string, row int, values []interface{}) {
+	fn := func(columns []string, row int, values []interface{}, err error) {
 		c <- values
 	}
 	iter := func() ([]interface{}, bool) {
@@ -510,4 +510,72 @@ func Streamer(db *sql.DB, query string, args ...interface{}) ([]MetaData, Iterat
 		close(c)
 	}()
 	return meta, iter, nil
+}
+
+type Action struct {
+	Query    string
+	Args     []interface{}
+	Callback func(int64, int64, error)
+}
+
+type Query struct {
+	Query string
+	Args  []interface{}
+	Reply func([]string, int, []interface{}, error)
+}
+
+func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		for q := range r {
+			if err := Stream(db, q.Reply, q.Query, q.Args...); err != nil && e != nil {
+				go func() {
+					e <- errors.Wrapf(err, "Stream error")
+				}()
+			}
+		}
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		for q := range w {
+			affected, last, err := Exec(db, q.Query, q.Args...)
+			q.Callback(affected, last, err)
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+}
+
+func xServer(db *sql.DB, r chan Query, w chan Action) {
+	var wg sync.WaitGroup
+	var mu sync.RWMutex
+	wg.Add(1)
+	go func() {
+		for q := range r {
+			//fmt.Println("READ:", q.Query)
+			mu.RLock()
+			if err := Stream(db, q.Reply, q.Query, q.Args...); err != nil {
+				fmt.Printf("Steam error: %v\n", err)
+			}
+			mu.RUnlock()
+		}
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		for q := range w {
+			//fmt.Printf("Q: %s A: %v\n", q.Query, q.Args)
+			mu.Lock()
+			affected, last, err := Exec(db, q.Query, q.Args...)
+			q.Callback(affected, last, err)
+			mu.Unlock()
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	fmt.Println("server exited")
 }

@@ -441,7 +441,7 @@ func (db DBU) LoadMany(query string, Kind interface{}, args ...interface{}) (err
 	return err, s2.Interface()
 }
 
-func (db DBU) Stream(fn func([]string, int, []interface{}), query string, args ...interface{}) error {
+func (db DBU) Stream(fn func([]string, int, []interface{}, error), query string, args ...interface{}) error {
 	logger(query, args)
 	return Stream(db.DB, fn, query, args...)
 }
@@ -677,18 +677,7 @@ func (db DBU) File(file string) error {
 }
 
 func (db DBU) Cmd(Query string) (affected, last int64, err error) {
-	Query = strings.TrimSpace(Query)
-	if 0 == len(Query) {
-		return
-	}
-	i, dberr := db.DB.Exec(Query)
-	if dberr != nil {
-		err = dberr
-		return
-	}
-	affected, _ = i.RowsAffected()
-	last, _ = i.LastInsertId()
-	return
+	return Exec(db.DB, Query)
 }
 
 func (db DBU) pragmatic(pragma string, dest ...interface{}) error {
