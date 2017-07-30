@@ -469,7 +469,7 @@ func Open(file string, init bool) (*sql.DB, error) {
 
 // OpenWithHook ultimately should be multi db aware
 func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
-	return OpenSqliteWithHook(file, DriverName, hook, true)
+	return OpenSqliteWithHook(file, DriverName, hook, init)
 }
 
 type Iterator func() (values []interface{}, ok bool)

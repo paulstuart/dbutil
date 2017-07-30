@@ -96,7 +96,6 @@ func registered(file string) *sqlite3.SQLiteConn {
 }
 
 func toIPv4(ip int64) string {
-	log.Println("to ipv4:", ip)
 	a := ip >> 24
 	b := (ip >> 16) & 0xFF
 	c := (ip >> 8) & 0xFF
@@ -106,7 +105,6 @@ func toIPv4(ip int64) string {
 }
 
 func fromIPv4(ip string) int64 {
-	log.Println("from ipv4:", ip)
 	octets := strings.Split(ip, ".")
 	if len(octets) != 4 {
 		return -1

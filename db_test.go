@@ -98,7 +98,6 @@ func init() {
 
 }
 
-/*
 func TestFuncs(t *testing.T) {
 	sqlInit(DriverName, "")
 	db, err := sql.Open("dbutil", ":memory:")
@@ -109,24 +108,24 @@ func TestFuncs(t *testing.T) {
 
 	const create = `create table if not exists iptest ( ip int )`
 	const ins = `
-insert into iptest values(fromIPv4('127.0.0.1'));
-insert into iptest values(fromIPv4('192.168.1.1'));
+insert into iptest values(atoip('127.0.0.1'));
+insert into iptest values(atoip('192.168.1.1'));
 `
-	_, err = db.Exec(create)
-	if err != nil {
+	if _, err = db.Exec(create); err != nil {
 		t.Fatalf("%q: %s\n", err, create)
 	}
-	_, err = db.Exec(ins)
-	//t.Log("INSERT:", i)
-	if err != nil {
+
+	if _, err = db.Exec(ins); err != nil {
 		t.Fatalf("%q: %s\n", err, ins)
 	}
-	var ip int64
-	var ipv4 string
-	dump(t, db, "select * from iptest", ip)
-	dump(t, db, "select toIPv4(ip) as ipv4 from iptest", ipv4)
+
+	/*
+		var ip int64
+		var ipv4 string
+		dump(t, db, "select * from iptest", ip)
+		dump(t, db, "select iptoa(ip) as ipv4 from iptest", ipv4)
+	*/
 }
-*/
 
 func TestSqliteCreate(t *testing.T) {
 	db, err := NewDBU(test_file, true)
@@ -217,7 +216,7 @@ func TestSqliteTable(t *testing.T) {
 }
 
 func structDb(t *testing.T) *sql.DB {
-	db, err := OpenSqlite(":memory:", "", true)
+	db, err := Open(":memory:", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +527,7 @@ func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
-	db, err := OpenSqlite(test_file, "", true)
+	db, err := Open(test_file, true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -560,14 +559,14 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 }
 
 func TestMissingDB(t *testing.T) {
-	_, err := OpenSqlite("this_path_does_not_exist", "", false)
+	_, err := Open("this_path_does_not_exist", false)
 	if err == nil {
 		t.Error("should have had error for missing file")
 	}
 }
 
 func BenchmarkQueryPrepared(b *testing.B) {
-	db, err := OpenSqlite(test_file, "", true)
+	db, err := Open(test_file, true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -615,7 +614,7 @@ func nullStream(columns []string, count int, buffer []interface{}, err error) {
 }
 
 func BenchmarkStream(b *testing.B) {
-	dbs, err := OpenSqlite("stest.db", "", true)
+	dbs, err := Open("stest.db", true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -629,7 +628,7 @@ func BenchmarkStream(b *testing.B) {
 }
 
 func BenchmarkStreamJSON(b *testing.B) {
-	dbs, err := OpenSqlite("stest.db", "", true)
+	dbs, err := Open("stest.db", true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -707,7 +706,7 @@ func hammerDB(name string) (*sql.DB, error) {
 	if name == "" {
 		name = "hammer.db"
 	}
-	db, err := OpenSqlite(name, "", true)
+	db, err := Open(name, true)
 	if err == nil {
 		//return db, Commands(db, hammer_time, testing.Verbose())
 		return db, Commands(db, hammer_time, false)
@@ -826,7 +825,7 @@ func slam(t *testing.T, inserter *Inserter, workers, count int) {
 }
 
 func TestGetResults(t *testing.T) {
-	db, err := OpenSqlite("hammer.db", "", true)
+	db, err := Open("hammer.db", true)
 	if err != nil {
 		t.Error(err)
 		return
@@ -912,5 +911,52 @@ func TestObjectInsert(t *testing.T) {
 	}
 	if !(i > 0) {
 		t.Errorf("expected last row to be greater than zero: %d", i)
+	}
+}
+
+func TestToString(t *testing.T) {
+	const u8 = "8 uints"
+	now := time.Now()
+	raw := sql.RawBytes("raw meat")
+	src := []interface{}{
+		nil,
+		"a string",
+		[]uint8(u8),
+		int64(64),
+		now,
+		raw,
+	}
+	text := toString(src)
+	if text[2] != u8 {
+		t.Errorf("expected: %s got: %s\n", u8, text[2])
+	}
+}
+
+func TestRowBadQuery(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "select * from Xstructs where name=? and kind=?"
+	args := []interface{}{"abc", 23}
+	_, _, err := Row(db, query, args...)
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
+func TestRowNoResults(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "select * from structs where name=? and kind=?"
+	args := []interface{}{"NOT MATCHING", 19182191212}
+	_, row, err := Row(db, query, args...)
+	if err != nil {
+		t.Error(err)
+	}
+	if len(row) > 0 {
+		t.Errorf("row (%d) should be empty: %v", len(row), row)
+		id := row[0].(int64)
+		if id > 0 {
+			t.Errorf("unexpected query results: %v", id)
+		}
 	}
 }
