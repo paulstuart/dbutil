@@ -312,6 +312,12 @@ func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
 }
 
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
+	/*
+		if db == nil {
+			err = fmt.Errorf("db is nil")
+			return
+		}
+	*/
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
 		return 0, 0, fmt.Errorf("empty query")
@@ -607,4 +613,51 @@ func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 	}()
 	wg.Wait()
 	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+}
+
+func GetResults(db *sql.DB, query string, args []interface{}, items ...interface{}) ([]string, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db is nil")
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if !rows.Next() {
+		return nil, nil
+	}
+	cols, _ := rows.Columns()
+	return cols, rows.Scan(items...)
+}
+
+func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
+	if db == nil {
+		return nil, ErrNilDB
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if !rows.Next() {
+		return nil, nil
+	}
+
+	cols, _ := rows.Columns()
+	buff := make([]interface{}, len(cols))
+	dest := make([]*interface{}, len(cols))
+	for i := range buff {
+		dest[i] = &buff[i]
+	}
+
+	if err := rows.Scan(dest); err != nil {
+		return nil, err
+	}
+
+	reply := make(map[string]interface{})
+	for i, col := range cols {
+		reply[col] = buff[i]
+	}
+
+	rows.Close()
+	return reply, err
 }

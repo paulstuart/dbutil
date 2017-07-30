@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -19,6 +21,7 @@ const (
 var (
 	ErrNoKeyField = fmt.Errorf("table has no key field")
 	ErrKeyMissing = fmt.Errorf("key is not set")
+	ErrNilDB      = fmt.Errorf("db is nil")
 )
 
 type DBU struct {
@@ -371,27 +374,37 @@ func (db DBU) Print(Query string, args ...interface{}) {
 	}
 }
 
-func (db DBU) GetString(query string, args ...interface{}) (reply string, err error) {
-	err = db.GetType(query, &reply, args...)
-	return
+func (db DBU) GetString(query string, args ...interface{}) (string, error) {
+	var reply string
+	return reply, db.GetType(query, &reply, args...)
 }
 
-func (db DBU) GetInt(Query string, args ...interface{}) (reply int, err error) {
-	err = db.GetType(Query, &reply, args...)
-	return
+func (db DBU) GetInt(query string, args ...interface{}) (int, error) {
+	var reply int
+	return reply, db.GetType(query, &reply, args...)
 }
 
-func (db DBU) GetType(query string, reply interface{}, args ...interface{}) (err error) {
+func (db DBU) GetType(query string, reply interface{}, args ...interface{}) error {
 	logger(query, args)
-	row := db.DB.QueryRow(query, args...)
-	err = row.Scan(reply)
-	return
+	_, err := GetResults(db.DB, query, args, reply)
+	return err
+	/*
+		row := db.DB.QueryRow(query, args...)
+		err := row.Scan(reply)
+		row.Close()
+		return err
+	*/
 }
 
-func (db DBU) Load(query string, reply *[]interface{}, args ...interface{}) (err error) {
-	row := db.DB.QueryRow(query, args...)
-	err = row.Scan(*reply...)
-	return
+func (db DBU) Load(query string, reply []interface{}, args ...interface{}) error {
+	_, err := GetResults(db.DB, query, args, reply...)
+	return err
+	/*
+		row := db.DB.QueryRow(query, args...)
+		err := row.Scan(*reply...)
+		row.Close()
+		return err
+	*/
 }
 
 // return list of IDs
@@ -535,6 +548,9 @@ func (db DBU) Row(query string, args ...interface{}) ([]string, error) {
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
 	logger(query, args)
+	if db.DB == nil {
+		return ErrNilDB
+	}
 	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		log.Println("error on query: " + query + " -- " + err.Error())
@@ -553,31 +569,24 @@ func (db DBU) Get(members []interface{}, query string, args ...interface{}) erro
 	return nil
 }
 
-func (db DBU) GetRow(Query string, args ...interface{}) (reply map[string]string, err error) {
-	rows, err := db.DB.Query(Query, args...)
+func (db DBU) GetRow(query string, args ...interface{}) (map[string]string, error) {
+	row, err := MapRow(db.DB, query, args...)
 	if err != nil {
-		return
+		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		cols, _ := rows.Columns()
-		temp := make([]string, len(cols))
-		dest := make([]*string, len(temp))
-		for i := range temp {
-			dest[i] = &temp[i]
-		}
-		err = rows.Scan(dest)
-		reply = make(map[string]string)
-		for i, col := range cols {
-			reply[col] = temp[i]
-		}
-		break
+
+	record := make(map[string]string)
+	for k, v := range row {
+		record[k] = fmt.Sprintf("%v", v)
 	}
-	return
+	return record, nil
 }
 
 func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 	logger(query, args)
+	if db.DB == nil {
+		return nil, ErrNilDB
+	}
 	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -605,24 +614,26 @@ func (db DBU) Table(query string, args ...interface{}) (*Table, error) {
 	return t, nil
 }
 
-func (db DBU) Rows(Query string, args ...interface{}) (results []string, err error) {
-	logger(Query, args)
-	rows, err := db.DB.Query(Query, args...)
-	if err != nil {
-		return
+func (db DBU) Rows(query string, args ...interface{}) ([]string, error) {
+	logger(query, args)
+	if db.DB == nil {
+		return nil, ErrNilDB
 	}
-	results = make([]string, 0)
+	rows, err := db.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]string, 0)
 	defer rows.Close()
 	for rows.Next() {
 		var dest string
 		err = rows.Scan(&dest)
 		if err != nil {
-			log.Println("SCAN ERR:", err, "QUERY:", Query)
-			return
+			return nil, errors.Wrapf(err, "query: %s args: %v", query, args)
 		}
 		results = append(results, dest)
 	}
-	return
+	return results, nil
 }
 
 func startsWith(data, sub string) bool {
@@ -631,6 +642,9 @@ func startsWith(data, sub string) bool {
 
 // emulate ".read FILENAME"
 func (db DBU) File(file string) error {
+	if db.DB == nil {
+		return ErrNilDB
+	}
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
 		return err

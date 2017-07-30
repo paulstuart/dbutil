@@ -2,6 +2,8 @@ package dbutil
 
 import (
 	"database/sql"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"sync"
@@ -15,7 +17,6 @@ const (
 )
 
 var (
-	test_db   DBU
 	test_file = "test.db"
 	w         = iotest.NewWriteLogger("", os.Stderr)
 )
@@ -94,8 +95,10 @@ type testMap map[int64]testStruct
 
 func init() {
 	os.Remove(test_file)
+
 }
 
+/*
 func TestFuncs(t *testing.T) {
 	sqlInit(DriverName, "")
 	db, err := sql.Open("dbutil", ":memory:")
@@ -111,20 +114,19 @@ insert into iptest values(fromIPv4('192.168.1.1'));
 `
 	_, err = db.Exec(create)
 	if err != nil {
-		t.Logf("%q: %s\n", err, create)
-		return
+		t.Fatalf("%q: %s\n", err, create)
 	}
-	i, err := db.Exec(ins)
-	t.Log("INSERT:", i)
+	_, err = db.Exec(ins)
+	//t.Log("INSERT:", i)
 	if err != nil {
-		t.Logf("%q: %s\n", err, ins)
-		return
+		t.Fatalf("%q: %s\n", err, ins)
 	}
 	var ip int64
 	var ipv4 string
 	dump(t, db, "select * from iptest", ip)
 	dump(t, db, "select toIPv4(ip) as ipv4 from iptest", ipv4)
 }
+*/
 
 func TestSqliteCreate(t *testing.T) {
 	db, err := NewDBU(test_file, true)
@@ -140,7 +142,7 @@ func TestSqliteCreate(t *testing.T) {
 	_, err = db.DB.Exec(sql)
 	if err != nil {
 		t.Logf("%q: %s\n", err, sql)
-		return
+		t.FailNow()
 	}
 
 	_, err = db.DB.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
@@ -152,28 +154,29 @@ func TestSqliteCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+
 	for rows.Next() {
 		var id int
 		var name string
 		rows.Scan(&id, &name)
 		t.Log(id, name)
 	}
+	rows.Close()
 }
 
 func TestSqliteDelete(t *testing.T) {
-	test_db, _ := NewDBU(test_file, true)
-	cnt, err := test_db.Update("delete from foo where id=?", 13)
+	db, _ := NewDBU(test_file, true)
+	cnt, err := db.Update("delete from foo where id=?", 13)
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
 	}
-	test_db.DB.Close()
+	db.DB.Close()
 	t.Log("DELETED: ", cnt)
 }
 
 func TestSqliteInsert(t *testing.T) {
-	test_db, _ = NewDBU(test_file, true)
-	cnt, err := test_db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
+	db, _ := NewDBU(test_file, true)
+	cnt, err := db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
 	}
@@ -181,7 +184,8 @@ func TestSqliteInsert(t *testing.T) {
 }
 
 func TestSqliteUpdate(t *testing.T) {
-	cnt, err := test_db.Update("update foo set id=23 where id > ? and name like ?", "3", "bi%")
+	db, _ := NewDBU(test_file, true)
+	cnt, err := db.Update("update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
 		t.Log("UPDATE ERROR: ", err)
 	}
@@ -189,26 +193,53 @@ func TestSqliteUpdate(t *testing.T) {
 }
 
 func TestSqliteType(t *testing.T) {
-	var cnt int
+	db, err := NewDBU(test_file, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cnt int64
 	cnt = -2
-	test_db.GetType("select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
+	db.GetType("select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
 	t.Log("COUNT: ", cnt)
 }
 
 func TestSqliteString(t *testing.T) {
 	var name string
-	test_db.GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
+	structDBU(t).GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
 	t.Log("NAME: ", name)
 }
 
 func TestSqliteTable(t *testing.T) {
+	db := structDBU(t)
 	t.Skip("Need a way to test tables in non verbose fashion")
-	table, _ := test_db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
+	table, _ := db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
 	table.Dumper(w, true)
 }
 
+func structDb(t *testing.T) *sql.DB {
+	db, err := OpenSqlite(":memory:", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	/*
+		if _, _, err := Exec(db, struct_sql); err != nil {
+			t.Fatal(err)
+		}
+	*/
+	prepare(db)
+	return db
+}
+
+func structDBU(t *testing.T) DBU {
+	return DBU{DB: structDb(t)}
+}
+
 func TestHTML(t *testing.T) {
-	table, err := test_db.Table("select * from foo")
+	db, err := NewDBU(test_file, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err := db.Table("select * from foo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,17 +253,15 @@ func TestHTML(t *testing.T) {
 }
 
 func TestObjects(t *testing.T) {
-	_, _, err := test_db.Exec(struct_sql)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := structDBU(t)
 	s1 := testStruct{
 		Name:     "Bobby Tables",
 		Kind:     23,
 		Data:     []byte("binary data"),
 		Modified: time.Now(),
 	}
-	s1.ID, err = test_db.ObjectInsert(s1)
+	var err error
+	s1.ID, err = db.ObjectInsert(s1)
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
@@ -242,7 +271,7 @@ func TestObjects(t *testing.T) {
 		Data:     []byte("whatever you like"),
 		Modified: time.Now(),
 	}
-	s2.ID, err = test_db.ObjectInsert(s2)
+	s2.ID, err = db.ObjectInsert(s2)
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
@@ -252,49 +281,52 @@ func TestObjects(t *testing.T) {
 		Data:     []byte("stick around"),
 		Modified: time.Now(),
 	}
-	s3.ID, err = test_db.ObjectInsert(s3)
+	s3.ID, err = db.ObjectInsert(s3)
 	if err != nil {
 		t.Errorf("OBJ INSERT ERROR: %s", err)
 	}
 	s1.Kind = 99
-	err = test_db.ObjectUpdate(s1)
+	err = db.ObjectUpdate(s1)
 	if err != nil {
 		t.Errorf("OBJ UPDATE ERROR: %s", err)
 	}
 	s2.Name = "New Name"
-	err = test_db.ObjectUpdate(s2)
+	err = db.ObjectUpdate(s2)
 	if err != nil {
 		t.Errorf("OBJ UPDATE ERROR: %s", err)
 	}
-	err = test_db.ObjectDelete(s2)
+	err = db.ObjectDelete(s2)
 	if err != nil {
 		t.Errorf("OBJ DELETE ERROR: %s", err)
 	}
 }
 
 func TestFindBy(t *testing.T) {
+	db := structDBU(t)
 	s := testStruct{}
-	if err := test_db.FindBy(&s, "name", "Bobby Tables"); err != nil {
+	if err := db.FindBy(&s, "name", "Bobby Tables"); err != nil {
 		t.Error(err)
 	}
 	t.Log("BY NAME", s)
 	u := testStruct{}
-	if err := test_db.FindBy(&u, "id", 1); err != nil {
+	if err := db.FindBy(&u, "id", 1); err != nil {
 		t.Error(err)
 	}
 	t.Log("BY ID", u)
 }
 
 func TestSelf(t *testing.T) {
+	db := structDBU(t)
 	s := testStruct{ID: 1}
-	if err := test_db.FindSelf(&s); err != nil {
+	if err := db.FindSelf(&s); err != nil {
 		t.Error(err)
 	}
 	t.Log("BY SELF", s)
 }
 
-func TestVersionPre(t *testing.T) {
-	v, err := test_db.Version()
+func xTestVersionPre(t *testing.T) {
+	db := structDBU(t)
+	v, err := db.Version()
 	if err != nil {
 		t.Error(err)
 	}
@@ -302,30 +334,32 @@ func TestVersionPre(t *testing.T) {
 }
 
 func TestDBObject(t *testing.T) {
+	db := structDBU(t)
 	s := &testStruct{
 		Name: "Grammatic, Bro",
 		Kind: 2001,
 		Data: []byte("lorem ipsum"),
 	}
-	if err := test_db.Add(s); err != nil {
+	if err := db.Add(s); err != nil {
 		t.Fatal(err)
 	}
 	s.Kind = 2015
 	s.Name = "Void droid"
-	if err := test_db.Save(s); err != nil {
+	if err := db.Save(s); err != nil {
 		t.Fatal(err)
 	}
 	z := testStruct{}
-	if err := test_db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
+	if err := db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("FOUND", z)
+	//t.Log("FOUND", z)
 
-	if err := test_db.Delete(s); err != nil {
+	if err := db.Delete(s); err != nil {
 		t.Fatal(err)
 	}
 }
 
+/*
 func TestVersionPost(t *testing.T) {
 	v, err := test_db.Version()
 	if err != nil {
@@ -333,67 +367,85 @@ func TestVersionPost(t *testing.T) {
 	}
 	t.Log("VERSION POST:", v)
 }
+*/
 
 func TestLoadMap(t *testing.T) {
-	results := test_db.LoadMap(testMap{}, "select * from structs").(testMap)
+	db := structDBU(t)
+	results := db.LoadMap(testMap{}, "select * from structs").(testMap)
 	for k, v := range results {
 		t.Log("K:", k, "V:", v)
 	}
 }
 
 func TestStreaming(t *testing.T) {
-	db, _ := OpenSqlite(test_file, "", true)
-	prepare(db)
+	db := structDb(t)
 	myStream := func(columns []string, count int, buffer []interface{}, err error) {
-		t.Log("STREAM COLS:", columns)
-		for _, b := range toString(buffer) {
-			t.Log("STREAM V:", b)
+		if len(columns) == 0 {
+			t.Error("no columns")
+		}
+		if false { // TODO: how to manage?
+			t.Log("STREAM COLS:", columns)
+			for _, b := range toString(buffer) {
+				t.Log("STREAM V:", b)
+			}
 		}
 	}
 	query := "select id,name,kind,modified from structs"
-	err := Stream(db, myStream, query)
-	if err != nil {
+	if err := Stream(db, myStream, query); err != nil {
 		t.Fatal(err)
 	}
 }
 
+type Writer struct {
+	Prefix string
+}
+
+func (w *Writer) Write(p []byte) (n int, err error) {
+	fmt.Print(w.Prefix)
+	return fmt.Print(string(p))
+}
+
 func TestStreamCSV(t *testing.T) {
+	db := structDb(t)
 	query := "select id,name,kind from structs"
-	t.Log("\nCSV:")
-	out := (*twriter)(t)
-	err := test_db.StreamCSV(out, query)
-	if err != nil {
+	w := &Writer{"CSV:"}
+
+	if err := StreamCSV(db, w, query); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestStreamTab(t *testing.T) {
+	db := structDb(t)
 	query := "select id,name,kind from structs"
-	t.Log("\nTAB:")
-	out := (*twriter)(t)
-	err := test_db.StreamTab(out, query)
-	if err != nil {
+	w := &Writer{"TAB:"}
+	if err := StreamTab(db, w, query); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestStreamJSON(t *testing.T) {
+	db := structDb(t)
 	query := "select id,name,kind from structs"
 	out := (*twriter)(t)
-	err := test_db.StreamJSON(out, query)
+	err := StreamJSON(db, out, query)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
+func testDBU(t *testing.T) *sql.DB {
+	return nil
+}
+
 func TestStreamObject(t *testing.T) {
+	db := structDBU(t)
 	s := &testStruct{Modified: time.Now()}
 	out := (*twriter)(t)
-	err := test_db.StreamObjects(out, s)
+	err := db.StreamObjects(out, s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	test_db.DB.Close()
 }
 
 func numbChk(t *testing.T, s string) {
@@ -433,27 +485,27 @@ func prepare(db *sql.DB) {
 }
 
 func TestBackup(t *testing.T) {
-	test_db, err := NewDBU(test_file, true)
+	db, err := NewDBU(test_file, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer test_db.DB.Close()
+	defer db.DB.Close()
 
-	prepare(test_db.DB)
-	v1, _ := test_db.Version()
+	prepare(db.DB)
+	v1, _ := db.Version()
 	t.Log("Version prior to backup:", v1)
-	t.Log("Backed up:", test_db.BackedUp)
-	t.Log("Changed prior to backup:", test_db.Changed())
+	t.Log("Backed up:", db.BackedUp)
+	t.Log("Changed prior to backup:", db.Changed())
 
 	tlog := NewTestlog(t)
-	err = test_db.Backup("test_backup.db", tlog)
+	err = db.Backup("test_backup.db", tlog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("Changed post backup:", test_db.Changed())
+	t.Log("Changed post backup:", db.Changed())
 	v2, _ := DBVersion("test.db")
 	t.Log("Version of backup:", v2)
-	t.Log("Backed up:", test_db.BackedUp)
+	t.Log("Backed up:", db.BackedUp)
 }
 
 func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
@@ -498,6 +550,7 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 
 	b.ResetTimer()
 	b.Run("adhoc", queryAdHoc)
+	b.StopTimer()
 	if err := db.Close(); err != nil {
 		b.Error(err)
 	}
@@ -523,7 +576,6 @@ func BenchmarkQueryPrepared(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	defer stmt.Close()
 
 	queryPrepared := func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
@@ -538,26 +590,21 @@ func BenchmarkQueryPrepared(b *testing.B) {
 
 	b.ResetTimer()
 	b.Run("prepared", queryPrepared)
+	stmt.Close()
+	b.StopTimer()
 	if err := db.Close(); err != nil {
 		b.Error(err)
 	}
 }
-func sink(args ...interface{}) {
-	//log.Printf("args: %v\n", args)
-}
-
-var (
-	dbs  *sql.DB
-	blah = []string{}
-)
 
 func nullStream(columns []string, count int, buffer []interface{}, err error) {
+	x := make([]int, 23)
 	for _, buf := range toString(buffer) {
-		blah = append(blah, buf)
+		fmt.Fprintln(ioutil.Discard, buf, x)
 	}
 }
 
-func BenchmarkStreaming(b *testing.B) {
+func BenchmarkStream(b *testing.B) {
 	dbs, err := OpenSqlite("stest.db", "", true)
 	if err != nil {
 		b.Error(err)
@@ -565,7 +612,29 @@ func BenchmarkStreaming(b *testing.B) {
 	}
 	prepare(dbs)
 
+	b.ResetTimer()
 	if err := Stream(dbs, nullStream, default_query); err != nil {
+		b.Error(err)
+	}
+}
+
+func BenchmarkStreamJSON(b *testing.B) {
+	dbs, err := OpenSqlite("stest.db", "", true)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	prepare(dbs)
+	w := ioutil.Discard
+	fmt.Println("VERBOSE:", testing.Verbose())
+	/*
+		if testing.Verbose() {
+			w = os.Stdout
+		}
+	*/
+
+	b.ResetTimer()
+	if err := StreamJSON(dbs, w, default_query); err != nil {
 		b.Error(err)
 	}
 }
@@ -591,7 +660,6 @@ PRAGMA synchronous = 1;
 	insert_hammer = `insert into hammer (worker, counter) values (?,?)`
 )
 
-//func hammer(db *sql.DB, workers, seconds int, query string, args ...interface{}) {
 func hammer(t *testing.T, workers, count int) {
 
 	var wg sync.WaitGroup
@@ -601,13 +669,12 @@ func hammer(t *testing.T, workers, count int) {
 		t.Error(err)
 		return
 	}
-	Pragmas(db, os.Stdout)
 
 	queue := make(chan int, count)
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(worker int) {
-			t.Log("worker:", worker)
+			t.Log("start worker:", worker)
 			for cnt := range queue {
 				if _, err := db.Exec(insert_hammer, worker, cnt); err != nil {
 					t.Errorf("worker:%d count:%d, error:%s\n", worker, cnt, err.Error())
@@ -624,7 +691,7 @@ func hammer(t *testing.T, workers, count int) {
 }
 
 func TestHammer(t *testing.T) {
-	hammer(t, 4, 100000)
+	hammer(t, 4, 10000)
 }
 
 func hammerDB(name string) (*sql.DB, error) {
@@ -633,21 +700,10 @@ func hammerDB(name string) (*sql.DB, error) {
 	}
 	db, err := OpenSqlite(name, "", true)
 	if err == nil {
+		//return db, Commands(db, hammer_time, testing.Verbose())
 		return db, Commands(db, hammer_time, false)
 	}
 	return nil, err
-}
-
-func TestPragmas(t *testing.T) {
-	db, err := OpenSqlite("hammer.db", "", true)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if err := Commands(db, hammer_time, true); err != nil {
-		t.Error(err)
-	}
-	Pragmas(db, os.Stdout)
 }
 
 func errLogger(t *testing.T) chan error {
@@ -663,14 +719,13 @@ func errLogger(t *testing.T) chan error {
 func TestServer(t *testing.T) {
 	db, err := hammerDB("")
 	if err != nil {
-		t.Error(err)
-		return
+		t.Fatal(err)
 	}
 	r := make(chan Query, 4096)
 	w := make(chan Action, 4096)
 	e := errLogger(t)
 	go Server(db, r, w, e)
-	batter(t, r, w, 10, 1000000)
+	batter(t, r, w, 10, 100000)
 	close(r)
 	close(w)
 	close(e)
@@ -733,7 +788,7 @@ func TestInserter(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	slam(t, inserter, 100, 1000000)
+	slam(t, inserter, 10, 1000000)
 }
 
 func slam(t *testing.T, inserter *Inserter, workers, count int) {
@@ -759,4 +814,17 @@ func slam(t *testing.T, inserter *Inserter, workers, count int) {
 	wg.Wait()
 	i := inserter.Close()
 	t.Logf("last: %d\n", i)
+}
+
+func TestGetResults(t *testing.T) {
+	db, err := OpenSqlite("hammer.db", "", true)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	var i int64
+	var ts string
+	query := "select id,ts from hammer limit 1"
+	_, err = GetResults(db, query, nil, &i, &ts)
+	fmt.Printf("i = %d, ts = %s\n", i, ts)
 }

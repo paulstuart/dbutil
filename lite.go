@@ -162,17 +162,17 @@ func OpenSqlite(file, name string, init bool) (*sql.DB, error) {
 //  where key and table are used for a single entry
 func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 	sqlInit(DriverName, hook)
-	full, err := url.Parse(file)
-	if err != nil {
-		return nil, errors.Wrapf(err, "parse file: %s", file)
-	}
-	filename := full.Path
-	if init {
-		os.Mkdir(path.Dir(filename), 0777)
-		if f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
-			return nil, errors.Wrapf(err, "os file: %s", file)
-		} else {
-			f.Close()
+	if file != ":memory:" {
+		full, err := url.Parse(file)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parse file: %s", file)
+		}
+		filename := full.Path
+		if init {
+			os.Mkdir(path.Dir(filename), 0777)
+			if _, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
+				return nil, errors.Wrapf(err, "os file: %s", file)
+			}
 		}
 	}
 	if len(name) == 0 {
@@ -277,7 +277,7 @@ func Pragmas(db *sql.DB, w io.Writer) {
 	}
 }
 
-// File emulate ".read FILENAME"
+// File emulates ".read FILENAME"
 func File(db *sql.DB, file string, echo bool) error {
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -287,11 +287,16 @@ func File(db *sql.DB, file string, echo bool) error {
 }
 
 // Commands emulates the client reading a series of commands
+// TODO: is this available in the C api?
 func Commands(db *sql.DB, buffer string, echo bool) error {
+
 	// strip comments
 	clean := c_comment.ReplaceAll([]byte(buffer), []byte{})
 	clean = sql_comment.ReplaceAll(clean, []byte{})
-	clean = readline.ReplaceAll(clean, []byte("${1};")) // .read gets a fake ';' to split on
+
+	// .read gets a fake ';' to split on
+	clean = readline.ReplaceAll(clean, []byte("${1};"))
+
 	lines := strings.Split(string(clean), ";")
 	multiline := "" // triggers are multiple lines
 	for _, line := range lines {
