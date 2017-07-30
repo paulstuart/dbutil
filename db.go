@@ -116,11 +116,10 @@ func dbFields(obj interface{}, skip_key bool) (table, key, fields string) {
 	return
 }
 
-type SQLColumns map[string]bool
-
-func GetColumns(obj interface{}) SQLColumns {
-	columns := SQLColumns{}
+/*
+func GetColumns(obj interface{}) []string {
 	t := reflect.TypeOf(obj)
+	columns := make([]string
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		tag := f.Tag.Get("sql")
@@ -131,6 +130,7 @@ func GetColumns(obj interface{}) SQLColumns {
 	}
 	return columns
 }
+*/
 
 // marshal the object fields into an array
 func objFields(obj interface{}, skip_key bool) (interface{}, []interface{}) {
@@ -208,7 +208,6 @@ func keyIndex(obj interface{}) int {
 func toString(in []interface{}) []string {
 	out := make([]string, 0, len(in))
 	for _, col := range in {
-		//	fmt.Printf("COL:%v (%T)\n", col, col)
 		var s string
 		switch t := col.(type) {
 		case nil:
@@ -290,7 +289,7 @@ func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, 
 	return affected, last, nil
 }
 
-func Run(db *sql.DB, query string, insert bool, args ...interface{}) (int64, error) {
+func Run(db *sql.DB, insert bool, query string, args ...interface{}) (int64, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
@@ -316,22 +315,26 @@ func Run(db *sql.DB, query string, insert bool, args ...interface{}) (int64, err
 	return i, err
 }
 
+// Inserter manages bulk inserts
 type Inserter struct {
 	db   *sql.DB
 	args chan []interface{}
 	last chan int64
 }
 
+// Insert a record into a transaction
 func (i *Inserter) Insert(args ...interface{}) {
 	i.args <- args
 }
 
+// Close closes the insert transaction
 func (i *Inserter) Close() int64 {
 	close(i.args)
 	last := <-i.last
 	return last
 }
 
+// NewInserter returns an Inserter for bulk inserts
 func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ...interface{}) (*Inserter, error) {
 
 	c := make(chan []interface{}, queue)
@@ -376,6 +379,7 @@ func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ..
 	}, nil
 }
 
+// Stream streams the query results to function fn
 func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -403,6 +407,7 @@ func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query stri
 	return err
 }
 
+// StreamCSV streams the query results as a comma separated file
 func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
 	cw := csv.NewWriter(w)
 	fn := func(columns []string, count int, buffer []interface{}, err error) {
@@ -415,6 +420,7 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 	return Stream(db, fn, query, args...)
 }
 
+// StreamTab streams the query results as a tab separated file
 func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
 	fn := func(columns []string, count int, buffer []interface{}, err error) {
 		if count == 0 {
@@ -425,6 +431,7 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 	return Stream(db, fn, query, args...)
 }
 
+// StreamJSON streams the query results as JSON to the writer
 func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
 	fn := func(columns []string, count int, buffer []interface{}, err error) {
 		if count > 0 {
@@ -455,6 +462,7 @@ func ColWriter(rows *sql.Rows) func(...interface{}) {
 	return nil
 }
 
+// Open returns a db struct for the given file
 func Open(file string, init bool) (*sql.DB, error) {
 	return OpenWithHook(file, "", init)
 }
@@ -549,6 +557,7 @@ type Query struct {
 	Reply func([]string, int, []interface{}, error)
 }
 
+// Server provides serialized access to the database
 func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -574,7 +583,8 @@ func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 }
 
-func GetResults(db *sql.DB, query string, args []interface{}, items ...interface{}) ([]string, error) {
+// GetResults writes to the record slice
+func GetResults(db *sql.DB, query string, args []interface{}, record ...interface{}) ([]string, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db is nil")
 	}
@@ -586,9 +596,10 @@ func GetResults(db *sql.DB, query string, args []interface{}, items ...interface
 		return nil, nil
 	}
 	cols, _ := rows.Columns()
-	return cols, rows.Scan(items...)
+	return cols, rows.Scan(record...)
 }
 
+// MapRow returns the results of a query as a map
 func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
 	if db == nil {
 		return nil, ErrNilDB

@@ -350,39 +350,17 @@ func (db DBU) InsertMany(query string, args [][]interface{}) (err error) {
 	return
 }
 
-func (db DBU) Update(sqltext string, args ...interface{}) (i int64, e error) {
-	return db.Run(sqltext, false, args...)
+func (db DBU) Update(query string, args ...interface{}) (i int64, e error) {
+	return db.Run(query, false, args...)
 }
 
-func (db DBU) Insert(sqltext string, args ...interface{}) (i int64, e error) {
-	return db.Run(sqltext, true, args...)
+func (db DBU) Insert(query string, args ...interface{}) (i int64, e error) {
+	return db.Run(query, true, args...)
 }
 
-func (db DBU) Run(sqltext string, insert bool, args ...interface{}) (i int64, err error) {
-	logger(sqltext, args)
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return
-	}
-	logger(sqltext, args)
-	stmt, err := tx.Prepare(sqltext)
-	if err != nil {
-		tx.Rollback()
-		return
-	}
-	defer stmt.Close()
-	result, err := stmt.Exec(args...)
-	if err != nil {
-		tx.Rollback()
-		return
-	}
-	if insert {
-		i, err = result.LastInsertId()
-	} else {
-		i, err = result.RowsAffected()
-	}
-	tx.Commit()
-	return
+func (db DBU) Run(query string, insert bool, args ...interface{}) (i int64, err error) {
+	logger(query, args)
+	return Run(db.DB, insert, query, args...)
 }
 
 func (db DBU) Print(Query string, args ...interface{}) {

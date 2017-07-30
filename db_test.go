@@ -886,3 +886,31 @@ func TestRowStrings(t *testing.T) {
 		t.Errorf("ROW: %+v\n", row)
 	}
 }
+
+func TestDBUInsert(t *testing.T) {
+	db := structDBU(t)
+	query := "insert into structs(name, kind, data) values(?,?,?)"
+	args := []interface{}{"Blur", 13, "bugman"}
+	i, err := db.Insert(query, args...)
+	if err != nil {
+		t.Error(err)
+	}
+	if !(i > 0) {
+		t.Errorf("expected last row to be greater than zero: %d", i)
+	}
+}
+
+func TestObjectInsert(t *testing.T) {
+	db := structDBU(t)
+	s := testStruct{
+		Name: "Blur",
+		Kind: 13,
+	}
+	i, err := db.ObjectInsert(s)
+	if err != nil {
+		t.Error(err)
+	}
+	if !(i > 0) {
+		t.Errorf("expected last row to be greater than zero: %d", i)
+	}
+}
