@@ -290,34 +290,12 @@ func Row(db *sql.DB, query string, args ...interface{}) ([]string, error) {
 	return []string{}, nil
 }
 
-func Get(db *sql.DB, members []interface{}, query string, args ...interface{}) error {
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return errors.Wrapf(err, "error on query: %s -- %v", query, err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		err = rows.Scan(members...)
-		if err != nil {
-			return errors.Wrapf(err, "scan error: %v query: %s args: %v", err, query, args)
-		}
-		return nil
-	}
-	return nil
-}
-
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
 	last, _, err := Exec(db, query, args...)
 	return last, err
 }
 
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
-	/*
-		if db == nil {
-			err = fmt.Errorf("db is nil")
-			return
-		}
-	*/
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
 		return 0, 0, fmt.Errorf("empty query")
@@ -540,13 +518,13 @@ func Streamer(db *sql.DB, query string, args ...interface{}) ([]MetaData, Iterat
 	if err != nil {
 		return nil, nil, err
 	}
-	t2 := reflect.TypeOf("")
-	log.Printf("TESTING: SCAN TYPE: %v (%T)\n", t2, t2)
+	//t2 := reflect.TypeOf("")
+	//log.Printf("TESTING: SCAN TYPE: %v (%T)\n", t2, t2)
 	meta := make([]MetaData, 0, len(columns))
 	for _, c := range columns {
 		//log.Printf("META: %+v\n", c)
-		t := c.ScanType()
-		log.Printf("COL: %s, SCAN TYPE: %v (%T)\n", c.Name(), t, t)
+		//t := c.ScanType()
+		//log.Printf("COL: %s, SCAN TYPE: %v (%T)\n", c.Name(), t, t)
 		m := MetaData{
 			Column: c.Name(),
 			Type:   c.ScanType(),

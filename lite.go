@@ -168,11 +168,13 @@ func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 			return nil, errors.Wrapf(err, "parse file: %s", file)
 		}
 		filename := full.Path
+		os.Mkdir(path.Dir(filename), 0777)
 		if init {
-			os.Mkdir(path.Dir(filename), 0777)
 			if _, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
 				return nil, errors.Wrapf(err, "os file: %s", file)
 			}
+		} else if _, err := os.Stat(filename); os.IsNotExist(err) {
+			return nil, err
 		}
 	}
 	if len(name) == 0 {

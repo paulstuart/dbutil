@@ -556,6 +556,13 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 	}
 }
 
+func TestMissingDB(t *testing.T) {
+	_, err := OpenSqlite("this_path_does_not_exist", "", false)
+	if err == nil {
+		t.Error("should have had error for missing file")
+	}
+}
+
 func BenchmarkQueryPrepared(b *testing.B) {
 	db, err := OpenSqlite(test_file, "", true)
 	if err != nil {
@@ -626,12 +633,11 @@ func BenchmarkStreamJSON(b *testing.B) {
 	}
 	prepare(dbs)
 	w := ioutil.Discard
-	fmt.Println("VERBOSE:", testing.Verbose())
+	if testing.Verbose() {
+		w = os.Stdout
+	}
 	/*
-		if testing.Verbose() {
-			w = os.Stdout
-		}
-	*/
+	 */
 
 	b.ResetTimer()
 	if err := StreamJSON(dbs, w, default_query); err != nil {
@@ -827,4 +833,17 @@ func TestGetResults(t *testing.T) {
 	query := "select id,ts from hammer limit 1"
 	_, err = GetResults(db, query, nil, &i, &ts)
 	fmt.Printf("i = %d, ts = %s\n", i, ts)
+}
+
+func TestCreateQuery(t *testing.T) {
+	db := structDb(t)
+	s := testStruct{}
+	query := createQuery(s, false)
+	// select id,name,kind,data,modified from structs
+	if _, err := GetResults(db, query, nil, &s.ID, &s.Name, &s.Kind, &s.Data, &s.Modified); err != nil {
+		t.Error(err)
+	}
+	if !(s.ID > 0) {
+		t.Errorf("ID is 0: %+v", s)
+	}
 }
