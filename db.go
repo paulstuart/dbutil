@@ -91,26 +91,6 @@ func deleteInfo(obj interface{}) (table, key string, id interface{}) {
 	return
 }
 
-func keyIsSet(obj interface{}) bool {
-	val := reflect.ValueOf(obj)
-	t := reflect.TypeOf(obj)
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.Tag.Get("key") == "true" {
-			v := val.Field(i).Interface()
-			switch v.(type) {
-			case int:
-				return v.(int) > 0
-			case int64:
-				return v.(int64) > 0
-			default:
-				return false
-			}
-		}
-	}
-	return false
-}
-
 // generate list of sql fields for members.
 // if skip_key is true, do not include the key field in the list
 func dbFields(obj interface{}, skip_key bool) (table, key, fields string) {
@@ -201,6 +181,7 @@ func createQuery(obj interface{}, skip_key bool) string {
 	return "select " + strings.Join(list, ",") + " from " + table
 }
 
+/*
 func keyName(obj interface{}) string {
 	t := reflect.TypeOf(obj)
 	for i := 0; i < t.NumField(); i++ {
@@ -211,6 +192,7 @@ func keyName(obj interface{}) string {
 	}
 	return ""
 }
+*/
 
 func keyIndex(obj interface{}) int {
 	t := reflect.TypeOf(obj)
@@ -226,6 +208,7 @@ func keyIndex(obj interface{}) int {
 func toString(in []interface{}) []string {
 	out := make([]string, 0, len(in))
 	for _, col := range in {
+		//	fmt.Printf("COL:%v (%T)\n", col, col)
 		var s string
 		switch t := col.(type) {
 		case nil:
@@ -258,36 +241,34 @@ func slptr(arr []string) []interface{} {
 	return resp
 }
 
-func Constrained(err error) (table, column string) {
-	const pre = "UNIQUE constraint failed: "
-	msg := err.Error()
-	if strings.HasPrefix(msg, pre) {
-		msg = msg[len(pre):]
-		if i := strings.Index(msg, "."); i > 0 {
-			table = msg[:i]
-			column = msg[i+1:]
-		}
-	}
-	return
-}
-
-func Row(db *sql.DB, query string, args ...interface{}) ([]string, error) {
+func Row(db *sql.DB, query string, args ...interface{}) ([]string, []interface{}, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return []string{}, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	cols, _ := rows.Columns()
 	buff := make([]interface{}, len(cols))
 	dest := make([]interface{}, len(cols))
-	for rows.Next() {
-		for i := range cols {
-			dest[i] = &(buff[i])
-		}
-		err = rows.Scan(dest...)
-		return toString(buff), err
+	if !rows.Next() {
+		return cols, nil, nil
 	}
-	return []string{}, nil
+	for i := range cols {
+		dest[i] = &(buff[i])
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return cols, nil, err
+	}
+
+	return cols, buff, err
+}
+
+func RowStrings(db *sql.DB, query string, args ...interface{}) ([]string, error) {
+	_, row, err := Row(db, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return toString(row), nil
 }
 
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
@@ -622,12 +603,12 @@ func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface
 
 	cols, _ := rows.Columns()
 	buff := make([]interface{}, len(cols))
-	dest := make([]*interface{}, len(cols))
+	dest := make([]interface{}, len(cols))
 	for i := range buff {
 		dest[i] = &buff[i]
 	}
 
-	if err := rows.Scan(dest); err != nil {
+	if err := rows.Scan(dest...); err != nil {
 		return nil, err
 	}
 

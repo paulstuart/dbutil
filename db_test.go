@@ -401,8 +401,11 @@ type Writer struct {
 }
 
 func (w *Writer) Write(p []byte) (n int, err error) {
-	fmt.Print(w.Prefix)
-	return fmt.Print(string(p))
+	/*
+		fmt.Print(w.Prefix)
+		return fmt.Print(string(p))
+	*/
+	return fmt.Fprint(ioutil.Discard, string(p))
 }
 
 func TestStreamCSV(t *testing.T) {
@@ -845,5 +848,41 @@ func TestCreateQuery(t *testing.T) {
 	}
 	if !(s.ID > 0) {
 		t.Errorf("ID is 0: %+v", s)
+	}
+}
+
+func TestMapRow(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "select * from structs where name=? and kind=?"
+	args := []interface{}{"abc", 23}
+	row, err := MapRow(db, query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := row["data"]
+	if !ok {
+		t.Fatal("missing data field")
+	}
+	if string(data.([]uint8)) != "what ev er" {
+		t.Errorf("ROW: %+v\n", row)
+	}
+
+}
+
+func TestRowStrings(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "select * from structs where name=? and kind=?"
+	args := []interface{}{"abc", 23}
+	row, err := RowStrings(db, query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row) < 5 {
+		t.Fatalf("expected 5 fields, found: %d", len(row))
+	}
+	if row[3] != "what ev er" {
+		t.Errorf("ROW: %+v\n", row)
 	}
 }

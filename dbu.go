@@ -237,6 +237,26 @@ func Placeholders(n int) string {
 	return strings.Join(a, ",")
 }
 
+func keyIsSet(obj interface{}) bool {
+	val := reflect.ValueOf(obj)
+	t := reflect.TypeOf(obj)
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Tag.Get("key") == "true" {
+			v := val.Field(i).Interface()
+			switch v.(type) {
+			case int:
+				return v.(int) > 0
+			case int64:
+				return v.(int64) > 0
+			default:
+				return false
+			}
+		}
+	}
+	return false
+}
+
 func (db DBU) ObjectInsert(obj interface{}) (int64, error) {
 	skip := !keyIsSet(obj) // if we have a key, we should probably use it
 	_, a := objFields(obj, skip)
@@ -543,7 +563,7 @@ func (db DBU) LoadMap(what interface{}, Query string, args ...interface{}) inter
 
 func (db DBU) Row(query string, args ...interface{}) ([]string, error) {
 	logger(query, args)
-	return Row(db.DB, query, args...)
+	return RowStrings(db.DB, query, args...)
 }
 
 func (db DBU) Get(members []interface{}, query string, args ...interface{}) error {
