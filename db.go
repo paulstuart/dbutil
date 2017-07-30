@@ -209,23 +209,23 @@ func toString(in []interface{}) []string {
 	out := make([]string, 0, len(in))
 	for _, col := range in {
 		var s string
-		switch t := col.(type) {
+		switch v := col.(type) {
 		case nil:
 			s = ""
 		case string:
-			s = col.(string)
+			s = v
 		case []uint8:
-			s = string(col.([]uint8))
+			s = string(v)
 		case int32:
-			s = strconv.Itoa(col.(int))
+			s = strconv.Itoa(int(v))
 		case int64:
-			s = strconv.FormatInt(col.(int64), 10)
+			s = strconv.FormatInt(v, 10)
 		case time.Time:
-			s = col.(time.Time).String()
+			s = v.String()
 		case sql.RawBytes:
-			s = string(t)
+			s = string(v)
 		default:
-			log.Println("unhandled type:", t.(string))
+			log.Printf("unhandled type: %T", col)
 		}
 		out = append(out, s)
 	}
@@ -273,6 +273,28 @@ func RowStrings(db *sql.DB, query string, args ...interface{}) ([]string, error)
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
 	last, _, err := Exec(db, query, args...)
 	return last, err
+}
+
+func InsertMany(db *sql.DB, query string, args [][]interface{}) error {
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, arg := range args {
+		_, err = stmt.Exec(arg...)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	tx.Commit()
+	return nil
 }
 
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
@@ -585,9 +607,6 @@ func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 
 // GetResults writes to the record slice
 func GetResults(db *sql.DB, query string, args []interface{}, record ...interface{}) ([]string, error) {
-	if db == nil {
-		return nil, fmt.Errorf("db is nil")
-	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -601,9 +620,6 @@ func GetResults(db *sql.DB, query string, args []interface{}, record ...interfac
 
 // MapRow returns the results of a query as a map
 func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
-	if db == nil {
-		return nil, ErrNilDB
-	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err

@@ -376,7 +376,7 @@ func TestLoadMap(t *testing.T) {
 	}
 }
 
-func TestStreaming(t *testing.T) {
+func TestStream(t *testing.T) {
 	db := structDb(t)
 	myStream := func(columns []string, count int, buffer []interface{}, err error) {
 		if len(columns) == 0 {
@@ -392,6 +392,25 @@ func TestStreaming(t *testing.T) {
 	query := "select id,name,kind,modified from structs"
 	if err := Stream(db, myStream, query); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStreamInvalidQuery(t *testing.T) {
+	db := structDb(t)
+	myStream := func(columns []string, count int, buffer []interface{}, err error) {
+		if len(columns) == 0 {
+			t.Error("no columns")
+		}
+		if false { // TODO: how to manage?
+			t.Log("STREAM COLS:", columns)
+			for _, b := range toString(buffer) {
+				t.Log("STREAM V:", b)
+			}
+		}
+	}
+	query := "THIS IS NOT SQL"
+	if err := Stream(db, myStream, query); err == nil {
+		t.Fatal("expected query error")
 	}
 }
 
@@ -781,6 +800,22 @@ func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
 	t.Log("battered")
 }
 
+func TestInserterInvalidQuery(t *testing.T) {
+	db, err := hammerDB("bulk.db")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	fn := func(err error) {
+		t.Log(err)
+	}
+	_, err = NewInserter(db, 4096, fn, "THIS IS NOT SQL")
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
 func TestInserter(t *testing.T) {
 	db, err := hammerDB("bulk.db")
 	if err != nil {
@@ -869,6 +904,16 @@ func TestMapRow(t *testing.T) {
 
 }
 
+func TestMapRowInvalidQuery(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "THIS IS NOT SQL"
+	_, err := MapRow(db, query)
+	if err == nil {
+		t.Fatal("expected query error")
+	}
+}
+
 func TestRowStrings(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
@@ -922,9 +967,11 @@ func TestToString(t *testing.T) {
 		nil,
 		"a string",
 		[]uint8(u8),
+		int32(32),
 		int64(64),
 		now,
 		raw,
+		3.1415926,
 	}
 	text := toString(src)
 	if text[2] != u8 {
@@ -958,5 +1005,62 @@ func TestRowNoResults(t *testing.T) {
 		if id > 0 {
 			t.Errorf("unexpected query results: %v", id)
 		}
+	}
+}
+
+func TestExecEmpty(t *testing.T) {
+	db := structDb(t)
+	_, _, err := Exec(db, "")
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
+func TestRunMissingArgs(t *testing.T) {
+	db := structDb(t)
+	query := "insert into structs values(?,?,?,?,?)"
+	_, err := Run(db, true, query)
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
+func TestRunInvalidQuery(t *testing.T) {
+	db := structDb(t)
+	query := "THIS IS NOT SQL"
+	_, err := Run(db, true, query)
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
+func TestInsert(t *testing.T) {
+	db := structDb(t)
+	query := "insert into structs(name, kind, data) values(?,?,?)"
+	args := []interface{}{"Blur", 13, "bugman"}
+	i, err := Insert(db, query, args...)
+	if err != nil {
+		t.Error(err)
+	}
+	if !(i > 0) {
+		t.Errorf("expected last row to be greater than zero: %d", i)
+	}
+}
+
+func TestGenerator(t *testing.T) {
+	db := structDb(t)
+
+	query := "select * from structs"
+	iter := Generator(db, query)
+	record, ok := iter()
+	if !ok {
+		t.Fatal("no record found")
+	}
+	if len(record) == 0 {
+		t.Fatal("empty record")
+	}
+	id := record[0].(int64)
+	if id < 1 {
+		t.Fatalf("invalid id: %d\n", id)
 	}
 }

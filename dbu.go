@@ -328,26 +328,8 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 	return nil
 }
 
-func (db DBU) InsertMany(query string, args [][]interface{}) (err error) {
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return
-	}
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		tx.Rollback()
-		return
-	}
-	defer stmt.Close()
-	for _, arg := range args {
-		_, err = stmt.Exec(arg...)
-		if err != nil {
-			tx.Rollback()
-			return
-		}
-	}
-	tx.Commit()
-	return
+func (db DBU) InsertMany(query string, args [][]interface{}) error {
+	return InsertMany(db, query, args)
 }
 
 func (db DBU) Update(query string, args ...interface{}) (i int64, e error) {
