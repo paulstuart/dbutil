@@ -27,6 +27,8 @@ type testStruct struct {
 	Kind     int       `sql:"kind"`
 	Data     []byte    `sql:"data"`
 	Modified time.Time `sql:"modified" update:"false"`
+	astring  string
+	anint    int
 }
 
 func (s *testStruct) Names() []string {
@@ -206,13 +208,6 @@ func TestSqliteString(t *testing.T) {
 	var name string
 	structDBU(t).GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
 	t.Log("NAME: ", name)
-}
-
-func TestSqliteTable(t *testing.T) {
-	db := structDBU(t)
-	t.Skip("Need a way to test tables in non verbose fashion")
-	table, _ := db.Table("select id, name from foo where id > ? and name like ?", "3", "b%")
-	table.Dumper(w, true)
 }
 
 func structDb(t *testing.T) *sql.DB {

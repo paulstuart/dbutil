@@ -329,15 +329,15 @@ func (db DBU) ObjectDelete(obj interface{}) error {
 }
 
 func (db DBU) InsertMany(query string, args [][]interface{}) error {
-	return InsertMany(db, query, args)
+	return InsertMany(db.DB, query, args)
 }
 
 func (db DBU) Update(query string, args ...interface{}) (i int64, e error) {
-	return db.Run(query, false, args...)
+	return Run(db.DB, false, query, args...)
 }
 
 func (db DBU) Insert(query string, args ...interface{}) (i int64, e error) {
-	return db.Run(query, true, args...)
+	return Run(db.DB, true, query, args...)
 }
 
 func (db DBU) Run(query string, insert bool, args ...interface{}) (i int64, err error) {

@@ -214,13 +214,11 @@ func (t Table) Dumper(h io.Writer, header bool) {
 		head := make([][]string, 0)
 		for i := rows - 1; i >= 0; i-- {
 			r := make([]string, 0)
-			val := ""
 			for j := 0; j < len(t.Columns); j++ {
+				val := ""
 				col := c[j]
 				if i < len(col) {
 					val = col[i]
-				} else {
-					val = ""
 				}
 				r = append(r, val)
 			}

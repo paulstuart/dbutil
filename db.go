@@ -276,9 +276,9 @@ func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
 }
 
 func InsertMany(db *sql.DB, query string, args [][]interface{}) error {
-	tx, err := db.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
-		return
+		return err
 	}
 	stmt, err := tx.Prepare(query)
 	if err != nil {

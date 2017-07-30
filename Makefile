@@ -29,6 +29,8 @@ profile:
 html:
 	@go tool cover -html cover.out
 
+show:	profile html
+
 cover:
 	@go test -cover $(arg1)  $(goflags) ./...
 
@@ -51,6 +53,6 @@ get:
 
 fresh: get build
 
-.PHONY: all test clean build compile install fresh get cover profile html
+.PHONY: all test clean build compile install fresh get cover profile html show
 
 ## EOF
