@@ -24,7 +24,7 @@ build:
 	@go build $(goflags) ./...
 
 profile:
-	@go test -v -coverprofile cover.out
+	@go test -coverprofile cover.out
 
 html:
 	@go tool cover -html cover.out

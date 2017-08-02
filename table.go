@@ -1,11 +1,9 @@
 package dbutil
 
 import (
-	"database/sql/driver"
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -60,39 +58,6 @@ func (t *Table) Adjustment(filter func(string) string, columns ...int) {
 type HTMLRow struct {
 	Table *Table
 	Row   int
-}
-
-func (r HTMLRow) Selected() bool {
-	for _, row := range r.Table.Selected {
-		if row == r.Row {
-			return true
-		}
-	}
-	return false
-}
-
-func (t Table) HTMLRows() <-chan HTMLRow {
-	ch := make(chan HTMLRow)
-	go func() {
-		for i := range t.Rows {
-			ch <- HTMLRow{Table: &t, Row: i}
-		}
-		close(ch) // terminate loop
-	}()
-	return ch
-}
-
-func (t Table) HTMLColumns() <-chan string {
-	ch := make(chan string)
-	go func() {
-		for i, col := range t.Columns {
-			if t.Visible(i) {
-				ch <- col
-			}
-		}
-		close(ch) // terminate loop
-	}()
-	return ch
 }
 
 // make html links on column using format string and optional columns for data
@@ -316,43 +281,4 @@ func (t *Table) Diff(reversed bool, cols ...string) *Table {
 		}
 	}
 	return delta
-}
-
-func qRows(conn driver.Queryer, query string, args ...driver.Value) (Table, error) {
-	t := Table{}
-	rows, err := conn.Query(query, args)
-	if err != nil {
-		return t, err
-	}
-	defer rows.Close()
-	t.Columns = rows.Columns()
-	buffer := make([]interface{}, len(t.Columns))
-	dest := make([]driver.Value, len(buffer))
-	for i := 0; i < len(buffer); i++ {
-		dest[i] = &buffer[i]
-	}
-	cnt := 0
-	for {
-		err := rows.Next(dest)
-		if err != nil {
-			if err != io.EOF {
-				return t, err
-			}
-			break
-		}
-		t.Rows = append(t.Rows, make(TableRow, len(buffer)))
-		for i, d := range dest {
-			switch d := d.(type) {
-			case []uint8:
-				t.Rows[cnt][i] = string(d)
-			case string:
-			case int64:
-				t.Rows[cnt][i] = fmt.Sprint(d)
-			default:
-				log.Printf("unexpected type %T", d)
-			}
-		}
-		cnt++
-	}
-	return t, nil
 }

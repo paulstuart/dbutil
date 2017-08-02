@@ -220,6 +220,8 @@ func toString(in []interface{}) []string {
 			s = strconv.Itoa(int(v))
 		case int64:
 			s = strconv.FormatInt(v, 10)
+		case float64:
+			s = fmt.Sprintf("%v", v)
 		case time.Time:
 			s = v.String()
 		case sql.RawBytes:
@@ -480,10 +482,6 @@ func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) erro
 	return Stream(db, fn, query, args...)
 }
 
-func ColWriter(rows *sql.Rows) func(...interface{}) {
-	return nil
-}
-
 // Open returns a db struct for the given file
 func Open(file string, init bool) (*sql.DB, error) {
 	return OpenWithHook(file, "", init)
@@ -494,6 +492,7 @@ func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
 	return OpenSqliteWithHook(file, DriverName, hook, init)
 }
 
+// Iterator returns query results
 type Iterator func() (values []interface{}, ok bool)
 
 func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
@@ -529,13 +528,8 @@ func Streamer(db *sql.DB, query string, args ...interface{}) ([]MetaData, Iterat
 	if err != nil {
 		return nil, nil, err
 	}
-	//t2 := reflect.TypeOf("")
-	//log.Printf("TESTING: SCAN TYPE: %v (%T)\n", t2, t2)
 	meta := make([]MetaData, 0, len(columns))
 	for _, c := range columns {
-		//log.Printf("META: %+v\n", c)
-		//t := c.ScanType()
-		//log.Printf("COL: %s, SCAN TYPE: %v (%T)\n", c.Name(), t, t)
 		m := MetaData{
 			Column: c.Name(),
 			Type:   c.ScanType(),

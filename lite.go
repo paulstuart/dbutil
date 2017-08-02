@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,9 +84,12 @@ var (
 )
 
 func register(file string, conn *sqlite3.SQLiteConn) {
-	rmu.Lock()
-	registry[file] = conn
-	rmu.Unlock()
+	file, _ = filepath.Abs(file)
+	if len(file) > 0 {
+		rmu.Lock()
+		registry[file] = conn
+		rmu.Unlock()
+	}
 }
 
 func registered(file string) *sqlite3.SQLiteConn {
@@ -138,12 +142,16 @@ func sqlInit(name, hook string) {
 				if err := conn.RegisterFunc("atoip", fromIPv4, true); err != nil {
 					return err
 				}
-				register(filename(conn), conn)
+				filename, err := ConnFilename(conn)
+				if err == nil {
+					register(filename, conn)
+				} else {
+					fmt.Println("Couldn't get filename for connection:", err)
+				}
 
 				if len(hook) > 0 {
 					if _, err := conn.Exec(hook, nil); err != nil {
-						fmt.Println("HOOK:", hook, "ERR:", err)
-						return err
+						return errors.Wrapf(err, "Connection hook failed: %s", hook)
 					}
 				}
 
@@ -186,16 +194,26 @@ func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 }
 
 // get filename of db
-func filename(conn driver.Queryer) string {
-	t, err := qRows(conn, "PRAGMA database_list")
+func filename(db *sql.DB) string {
+	var seq, name, file string
+	GetResults(db, "PRAGMA database_list", nil, &seq, &name, &file)
+	return file
+}
 
-	if err == nil {
-		if len(t.Rows) > 0 && len(t.Rows[0]) > 2 {
-			return t.Rows[0][2]
+func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
+	var filename string
+	fn := func(cols []string, row int, values []driver.Value) error {
+		if len(values) < 3 {
+			return fmt.Errorf("only got %d values", len(values))
 		}
-
+		if values[2] == nil {
+			return fmt.Errorf("nil values")
+		}
+		filename = string(values[2].([]uint8))
+		return nil
 	}
-	return ""
+	err := ConnQuery(conn, fn, "PRAGMA database_list")
+	return filename, err
 }
 
 func DBVersion(file string) (uint64, error) {
@@ -231,12 +249,8 @@ func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 	from := registered(fromDB)
 	to := registered(toDB)
 
-	logger.Printf("FROM: %s (%v)\n", fromDB, from)
-	logger.Printf("TO  : %s (%v)\n", toDB, to)
-
 	bk, err := to.Backup("main", from, "main")
 	if err != nil {
-		logger.Println("BACKUP ERR:", err)
 		return err
 	}
 
@@ -333,4 +347,27 @@ func Commands(db *sql.DB, buffer string, echo bool) error {
 		}
 	}
 	return nil
+}
+
+// ConnQuery executes a query on a driver connection
+//func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []interface{}), query string, args ...driver.Value) error {
+func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) error, query string, args ...driver.Value) error {
+	rows, err := conn.Query(query, args)
+	if err != nil {
+		return err
+	}
+	cols := rows.Columns()
+	cnt := 0
+	for {
+		buffer := make([]driver.Value, len(cols))
+		if err := rows.Next(buffer); err != nil {
+			if err != io.EOF {
+				return err
+			}
+			return nil
+		}
+		fn(cols, cnt, buffer)
+		cnt++
+	}
+	return rows.Close()
 }

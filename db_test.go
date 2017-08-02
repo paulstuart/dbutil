@@ -228,24 +228,6 @@ func structDBU(t *testing.T) DBU {
 	return DBU{DB: structDb(t)}
 }
 
-func TestHTML(t *testing.T) {
-	db, err := NewDBU(test_file, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	table, err := db.Table("select * from foo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	table.SetLinks(0, "/x/%s/%s", 0, 1)
-	for row := range table.HTMLRows() {
-		t.Log("ROW")
-		for col := range row.Columns() {
-			t.Log("COL", col)
-		}
-	}
-}
-
 func TestObjects(t *testing.T) {
 	db := structDBU(t)
 	s1 := testStruct{
@@ -864,7 +846,7 @@ func TestGetResults(t *testing.T) {
 	var ts string
 	query := "select id,ts from hammer limit 1"
 	_, err = GetResults(db, query, nil, &i, &ts)
-	fmt.Printf("i = %d, ts = %s\n", i, ts)
+	t.Logf("i = %d, ts = %s\n", i, ts)
 }
 
 func TestCreateQuery(t *testing.T) {
@@ -1057,5 +1039,39 @@ func TestGenerator(t *testing.T) {
 	id := record[0].(int64)
 	if id < 1 {
 		t.Fatalf("invalid id: %d\n", id)
+	}
+}
+
+func TestFilename(t *testing.T) {
+	db, err := NewDBU(test_file, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.DB.Close()
+}
+
+func TestInsertMany(t *testing.T) {
+	db := structDb(t)
+
+	kind := 314159
+	query := "insert into structs(name, kind, data) values(?,?,?)"
+	args := [][]interface{}{
+		{"many1", kind, "pie-hole"},
+		{"many2", kind, "pie-hole"},
+		{"many3", kind, "pie-hole"},
+		{"many4", kind, "pie-hole"},
+	}
+	if err := InsertMany(db, query, args); err != nil {
+		t.Fatal(err)
+	}
+
+	query2 := "select count(*) as count from structs where kind=?"
+	args2 := []interface{}{kind}
+	var count int
+	if _, err := GetResults(db, query2, args2, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(args) {
+		t.Errorf("expected %d rows but got %d rows instead\n", len(args), count)
 	}
 }
