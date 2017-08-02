@@ -621,53 +621,8 @@ func startsWith(data, sub string) bool {
 }
 
 // emulate ".read FILENAME"
-func (db DBU) File(file string) error {
-	if db.DB == nil {
-		return ErrNilDB
-	}
-	out, err := ioutil.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	// strip comments
-	clean := c_comment.ReplaceAll(out, []byte{})
-	clean = sql_comment.ReplaceAll(clean, []byte{})
-	clean = readline.ReplaceAll(clean, []byte("${1};")) // .read gets a fake ';' to split on
-	lines := strings.Split(string(clean), ";")
-	multiline := "" // triggers are multiple lines
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if 0 == len(line) {
-			continue
-		}
-		if strings.HasPrefix(line, ".read ") {
-			name := strings.TrimSpace(line[7:])
-			err = db.File(name)
-			if err != nil {
-				log.Println("READ FILE:", name, "ERR:", err)
-			}
-			continue
-		} else if strings.HasPrefix(line, ".print ") {
-			fmt.Println(strings.Trim(strings.TrimSpace(line[7:]), "'"))
-			continue
-		} else if startsWith(line, "CREATE TRIGGER") {
-			multiline = line
-			continue
-		} else if startsWith(line, "END") {
-			line = multiline + ";\n" + line
-			multiline = ""
-		} else if len(multiline) > 0 {
-			multiline += ";\n" + line // restore our 'split' transaction
-			continue
-		}
-		if _, err := db.DB.Exec(line); err != nil {
-			log.Println("EXEC QUERY:", line, "\nFILE:", db.Filename(), "\nERR:", err)
-			return err
-		} else if debugging() {
-			log.Println("QUERY:", line)
-		}
-	}
-	return nil
+func (db DBU) File(file string, echo bool) error {
+	return File(db.DB, file, echo)
 }
 
 func (db DBU) Cmd(Query string) (affected, last int64, err error) {

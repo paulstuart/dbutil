@@ -849,6 +849,19 @@ func TestGetResults(t *testing.T) {
 	t.Logf("i = %d, ts = %s\n", i, ts)
 }
 
+func TestGetResultsEmpty(t *testing.T) {
+	db, err := Open("hammer.db", true)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	var i int64
+	var ts string
+	query := "select id,ts from hammer limit 1 where id=-1"
+	_, err = GetResults(db, query, nil, &i, &ts)
+	t.Logf("i = %d, ts = %s\n", i, ts)
+}
+
 func TestCreateQuery(t *testing.T) {
 	db := structDb(t)
 	s := testStruct{}
@@ -888,6 +901,17 @@ func TestMapRowInvalidQuery(t *testing.T) {
 	_, err := MapRow(db, query)
 	if err == nil {
 		t.Fatal("expected query error")
+	}
+}
+
+func TestMapRowEmpty(t *testing.T) {
+	db := structDb(t)
+	// select id,name,kind,data,modified from structs
+	query := "select * from structs where name=? and kind=?"
+	args := []interface{}{"this does not exist", 666}
+	_, err := MapRow(db, query, args...)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
