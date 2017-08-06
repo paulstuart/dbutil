@@ -396,7 +396,7 @@ create table hammer (
 	ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-pragma cache_size= 10485760;
+PRAGMA cache_size= 10485760;
 
 PRAGMA journal_mode = WAL;
 

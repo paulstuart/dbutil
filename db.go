@@ -288,11 +288,11 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		if count == 0 {
 			cw.Write(columns)
 		}
-		if s, err := toString(buffer); err != nil {
-			return err
+		s, err := toString(buffer)
+		if err == nil {
+			cw.Write(s)
 		}
-		cw.Write(s)
-		return nil
+		return err
 	}
 	defer cw.Flush()
 	return Stream(db, fn, query, args...)
@@ -304,11 +304,11 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
-		if s, err := toString(buffer); err != nil {
-			return err
+		s, err := toString(buffer)
+		if err == nil {
+			fmt.Fprintln(w, strings.Join(s, "\t"))
 		}
-		fmt.Fprintln(w, strings.Join(s, "\t"))
-		return nil
+		return err
 	}
 	return Stream(db, fn, query, args...)
 }
