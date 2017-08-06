@@ -295,12 +295,12 @@ func Pragmas(db *sql.DB, w io.Writer) {
 }
 
 // File emulates ".read FILENAME"
-func File(db *sql.DB, file string, echo bool) error {
+func File(db *sql.DB, file string, echo bool, w io.Writer) error {
 	out, err := ioutil.ReadFile(file)
 	if err != nil {
 		return err
 	}
-	return Commands(db, string(out), echo)
+	return Commands(db, string(out), echo, w)
 }
 
 func startsWith(data, sub string) bool {
@@ -309,8 +309,10 @@ func startsWith(data, sub string) bool {
 
 // Commands emulates the client reading a series of commands
 // TODO: is this available in the C api?
-func Commands(db *sql.DB, buffer string, echo bool) error {
-
+func Commands(db *sql.DB, buffer string, echo bool, w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	// strip comments
 	clean := commentC.ReplaceAll([]byte(buffer), []byte{})
 	clean = commentSQL.ReplaceAll(clean, []byte{})
@@ -334,12 +336,15 @@ func Commands(db *sql.DB, buffer string, echo bool) error {
 			continue
 		case strings.HasPrefix(line, ".read "):
 			name := strings.TrimSpace(line[6:])
-			if err := File(db, name, echo); err != nil {
+			if err := File(db, name, echo, w); err != nil {
 				return errors.Wrapf(err, "read file: %s", name)
 			}
 			continue
 		case strings.HasPrefix(line, ".print "):
-			fmt.Println(strings.Trim(strings.TrimSpace(line[7:]), "'"))
+			str := strings.TrimSpace(line[7:])
+			str = strings.Trim(str, `"`)
+			str = strings.Trim(str, "'")
+			fmt.Println(str)
 			continue
 		case startsWith(line, "CREATE TRIGGER"):
 			multiline = line

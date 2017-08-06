@@ -148,8 +148,7 @@ func InsertMany(db *sql.DB, query string, args ...[]interface{}) error {
 	}
 	defer stmt.Close()
 	for _, arg := range args {
-		_, err = stmt.Exec(arg...)
-		if err != nil {
+		if _, err = stmt.Exec(arg...); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -471,4 +470,10 @@ func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface
 
 	rows.Close()
 	return reply, err
+}
+
+// Close cleans up the database before closing
+func Close(db *sql.DB) {
+	Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)")
+	db.Close()
 }
