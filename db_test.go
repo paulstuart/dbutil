@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
+	"path"
 	"sync"
 	"testing"
 	"testing/iotest"
@@ -13,95 +15,29 @@ import (
 )
 
 const (
-	default_query = "select id,name,kind,modified from structs"
-)
-
-var (
-	test_file = "test.db"
-	w         = iotest.NewWriteLogger("", os.Stderr)
-)
-
-type testStruct struct {
-	ID       int64     `sql:"id" key:"true" table:"structs"`
-	Name     string    `sql:"name"`
-	Kind     int       `sql:"kind"`
-	Data     []byte    `sql:"data"`
-	Modified time.Time `sql:"modified" update:"false"`
-	astring  string
-	anint    int
-}
-
-func (s *testStruct) Names() []string {
-	return []string{
-		"ID",
-		"Name",
-		"Kind",
-		"Data",
-		"Modified",
-	}
-}
-
-func (s *testStruct) TableName() string {
-	return "structs"
-}
-
-func (s *testStruct) KeyField() string {
-	return "id"
-}
-
-func (s *testStruct) KeyName() string {
-	return "ID"
-}
-
-func (s *testStruct) InsertFields() string {
-	return "name,kind,data"
-}
-
-func (s *testStruct) SelectFields() string {
-	return "id,name,kind,data,modified"
-}
-
-func (s *testStruct) UpdateValues() []interface{} {
-	return []interface{}{s.Name, s.Kind, s.Data, s.ID}
-}
-
-func (s *testStruct) MemberPointers() []interface{} {
-	return []interface{}{&s.ID, &s.Name, &s.Kind, &s.Data, &s.Modified}
-}
-
-func (s *testStruct) InsertValues() []interface{} {
-	return []interface{}{s.Name, s.Kind, s.Data}
-}
-
-func (s *testStruct) SetID(id int64) {
-	s.ID = id
-}
-
-func (s *testStruct) Key() int64 {
-	return s.ID
-}
-
-func (s *testStruct) ModifiedBy(u int64, t time.Time) {
-	s.Modified = t
-}
-
-const struct_sql = `create table if not exists structs (
+	querySelect = "select id,name,kind,modified from structs"
+	queryBad    = "c e n'est pas une sql query"
+	queryCreate = `create table if not exists structs (
     id integer not null primary key,
     name text,
     kind int,
     data blob,
     modified   DATETIME DEFAULT CURRENT_TIMESTAMP
 );`
+)
 
-type testMap map[int64]testStruct
+var (
+	testFile = "test.db"
+	Xw       = iotest.NewWriteLogger("", os.Stderr)
+)
 
 func init() {
-	os.Remove(test_file)
+	os.Remove(testFile)
 
 }
 
 func TestFuncs(t *testing.T) {
-	sqlInit(DriverName, "")
+	sqlInit(DriverName, "", IPFuncs...)
 	db, err := sql.Open("dbutil", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -121,37 +57,49 @@ insert into iptest values(atoip('192.168.1.1'));
 		t.Fatalf("%q: %s\n", err, ins)
 	}
 
-	/*
-		var ip int64
-		var ipv4 string
-		dump(t, db, "select * from iptest", ip)
-		dump(t, db, "select iptoa(ip) as ipv4 from iptest", ipv4)
-	*/
+	const testIP = "192.168.1.1"
+	var ipv4 string
+	args := []interface{}{testIP}
+	GetResults(db, "select iptoa(ip) as ipv4 from iptest where ipv4 = ?", args, &ipv4)
+	if ipv4 != testIP {
+		t.Errorf("expected: %s but got: %s\n", testIP, ipv4)
+	}
 }
 
-func TestSqliteCreate(t *testing.T) {
-	db, err := NewDBU(test_file, true)
+func TestSqliteBadHook(t *testing.T) {
+	db, err := OpenSqliteWithHook(testFile, DriverName, queryBad, true)
+	defer db.Close()
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	if _, err := DataVersion(db); err != nil {
+		t.Fatal("expected error for bad hook")
+	}
+}
+
+func TestSqliteCreate(t *testing.T) {
+	db, err := Open(testFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
 	sql := `
 	create table foo (id integer not null primary key, name text);
 	delete from foo;
 	`
-	_, err = db.DB.Exec(sql)
+	_, err = db.Exec(sql)
 	if err != nil {
-		t.Logf("%q: %s\n", err, sql)
-		t.FailNow()
+		t.Fatalf("%q: %s\n", err, sql)
 	}
 
-	_, err = db.DB.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
+	_, err = db.Exec("insert into foo(id, name) values(1, 'foo'), (2, 'bar'), (3, 'baz')")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := db.DB.Query("select id, name from foo")
+	rows, err := db.Query("select id, name from foo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,25 +107,27 @@ func TestSqliteCreate(t *testing.T) {
 	for rows.Next() {
 		var id int
 		var name string
-		rows.Scan(&id, &name)
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
 		t.Log(id, name)
 	}
 	rows.Close()
 }
 
 func TestSqliteDelete(t *testing.T) {
-	db, _ := NewDBU(test_file, true)
-	cnt, err := db.Update("delete from foo where id=?", 13)
+	db, _ := Open(testFile, true)
+	cnt, err := Update(db, "delete from foo where id=?", 13)
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
 	}
-	db.DB.Close()
+	db.Close()
 	t.Log("DELETED: ", cnt)
 }
 
 func TestSqliteInsert(t *testing.T) {
-	db, _ := NewDBU(test_file, true)
-	cnt, err := db.Update("insert into foo (id,name) values(?,?)", 13, "bakers")
+	db, _ := Open(testFile, true)
+	cnt, err := Update(db, "insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
 	}
@@ -185,29 +135,12 @@ func TestSqliteInsert(t *testing.T) {
 }
 
 func TestSqliteUpdate(t *testing.T) {
-	db, _ := NewDBU(test_file, true)
-	cnt, err := db.Update("update foo set id=23 where id > ? and name like ?", "3", "bi%")
+	db, _ := Open(testFile, true)
+	cnt, err := Update(db, "update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
 		t.Log("UPDATE ERROR: ", err)
 	}
 	t.Log("UPDATED: ", cnt)
-}
-
-func TestSqliteType(t *testing.T) {
-	db, err := NewDBU(test_file, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cnt int64
-	cnt = -2
-	db.GetType("select count(*) from foo where id > ? and name like ?", &cnt, "3", "b%")
-	t.Log("COUNT: ", cnt)
-}
-
-func TestSqliteString(t *testing.T) {
-	var name string
-	structDBU(t).GetType("select name from foo where id > ? and name like ?", &name, "3", "bi%")
-	t.Log("NAME: ", name)
 }
 
 func structDb(t *testing.T) *sql.DB {
@@ -215,124 +148,8 @@ func structDb(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	/*
-		if _, _, err := Exec(db, struct_sql); err != nil {
-			t.Fatal(err)
-		}
-	*/
 	prepare(db)
 	return db
-}
-
-func structDBU(t *testing.T) DBU {
-	return DBU{DB: structDb(t)}
-}
-
-func TestObjects(t *testing.T) {
-	db := structDBU(t)
-	s1 := testStruct{
-		Name:     "Bobby Tables",
-		Kind:     23,
-		Data:     []byte("binary data"),
-		Modified: time.Now(),
-	}
-	var err error
-	s1.ID, err = db.ObjectInsert(s1)
-	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: %s", err)
-	}
-	s2 := testStruct{
-		Name:     "Master Blaster",
-		Kind:     999,
-		Data:     []byte("whatever you like"),
-		Modified: time.Now(),
-	}
-	s2.ID, err = db.ObjectInsert(s2)
-	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: %s", err)
-	}
-	s3 := testStruct{
-		Name:     "A, Keeper",
-		Kind:     123,
-		Data:     []byte("stick around"),
-		Modified: time.Now(),
-	}
-	s3.ID, err = db.ObjectInsert(s3)
-	if err != nil {
-		t.Errorf("OBJ INSERT ERROR: %s", err)
-	}
-	s1.Kind = 99
-	err = db.ObjectUpdate(s1)
-	if err != nil {
-		t.Errorf("OBJ UPDATE ERROR: %s", err)
-	}
-	s2.Name = "New Name"
-	err = db.ObjectUpdate(s2)
-	if err != nil {
-		t.Errorf("OBJ UPDATE ERROR: %s", err)
-	}
-	err = db.ObjectDelete(s2)
-	if err != nil {
-		t.Errorf("OBJ DELETE ERROR: %s", err)
-	}
-}
-
-func TestFindBy(t *testing.T) {
-	db := structDBU(t)
-	s := testStruct{}
-	if err := db.FindBy(&s, "name", "Bobby Tables"); err != nil {
-		t.Error(err)
-	}
-	t.Log("BY NAME", s)
-	u := testStruct{}
-	if err := db.FindBy(&u, "id", 1); err != nil {
-		t.Error(err)
-	}
-	t.Log("BY ID", u)
-}
-
-func TestSelf(t *testing.T) {
-	db := structDBU(t)
-	s := testStruct{ID: 1}
-	if err := db.FindSelf(&s); err != nil {
-		t.Error(err)
-	}
-	t.Log("BY SELF", s)
-}
-
-func xTestVersionPre(t *testing.T) {
-	db := structDBU(t)
-	v, err := db.Version()
-	if err != nil {
-		t.Error(err)
-	}
-	t.Log("VERSION PRE:", v)
-}
-
-func TestDBObject(t *testing.T) {
-	db := structDBU(t)
-	s := &testStruct{
-		Name: "Grammatic, Bro",
-		Kind: 2001,
-		Data: []byte("lorem ipsum"),
-	}
-	if err := db.Add(s); err != nil {
-		t.Fatal(err)
-	}
-	s.Kind = 2015
-	s.Name = "Void droid"
-	if err := db.Save(s); err != nil {
-		t.Fatal(err)
-	}
-	z := testStruct{}
-	if err := db.Find(&z, QueryKeys{"kind": 2015}); err != nil {
-		t.Fatal(err)
-	}
-	//t.Log("FOUND", z)
-
-	if err := db.Delete(s); err != nil {
-		t.Fatal(err)
-	}
 }
 
 /*
@@ -344,27 +161,18 @@ func TestVersionPost(t *testing.T) {
 	t.Log("VERSION POST:", v)
 }
 */
-
-func TestLoadMap(t *testing.T) {
-	db := structDBU(t)
-	results := db.LoadMap(testMap{}, "select * from structs").(testMap)
-	for k, v := range results {
-		t.Log("K:", k, "V:", v)
-	}
-}
-
 func TestStream(t *testing.T) {
 	db := structDb(t)
-	myStream := func(columns []string, count int, buffer []interface{}, err error) {
-		if len(columns) == 0 {
-			t.Error("no columns")
+	myStream := func(columns []string, count int, buffer []interface{}) error {
+		if len(columns) != 4 {
+			t.Fatal("no columns")
 		}
-		if false { // TODO: how to manage?
-			t.Log("STREAM COLS:", columns)
-			for _, b := range toString(buffer) {
-				t.Log("STREAM V:", b)
-			}
+		if id, ok := buffer[0].(int64); !ok {
+			t.Fatalf("expected numeric id: %v", buffer[0])
+		} else if id == 0 {
+			t.Fatalf("expected row id > 0")
 		}
+		return nil
 	}
 	query := "select id,name,kind,modified from structs"
 	if err := Stream(db, myStream, query); err != nil {
@@ -372,21 +180,15 @@ func TestStream(t *testing.T) {
 	}
 }
 
-func TestStreamInvalidQuery(t *testing.T) {
+func TestStreamBadQuery(t *testing.T) {
 	db := structDb(t)
-	myStream := func(columns []string, count int, buffer []interface{}, err error) {
+	myStream := func(columns []string, count int, buffer []interface{}) error {
 		if len(columns) == 0 {
 			t.Error("no columns")
 		}
-		if false { // TODO: how to manage?
-			t.Log("STREAM COLS:", columns)
-			for _, b := range toString(buffer) {
-				t.Log("STREAM V:", b)
-			}
-		}
+		return nil
 	}
-	query := "THIS IS NOT SQL"
-	if err := Stream(db, myStream, query); err == nil {
+	if err := Stream(db, myStream, queryBad); err == nil {
 		t.Fatal("expected query error")
 	}
 }
@@ -432,21 +234,7 @@ func TestStreamJSON(t *testing.T) {
 	}
 }
 
-func testDBU(t *testing.T) *sql.DB {
-	return nil
-}
-
-func TestStreamObject(t *testing.T) {
-	db := structDBU(t)
-	s := &testStruct{Modified: time.Now()}
-	out := (*twriter)(t)
-	err := db.StreamObjects(out, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func numbChk(t *testing.T, s string) {
+func numbChk(t *testing.T, s interface{}) {
 	t.Log(s, isNumber(s))
 }
 
@@ -475,35 +263,46 @@ func (w *twriter) Write(p []byte) (int, error) {
 }
 
 func prepare(db *sql.DB) {
-	Exec(db, struct_sql)
-	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "abc", 23, "what ev er")
-	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "def", 69, "m'kay")
-	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "hij", 42, "meaning of life")
-	Exec(db, "insert into structs(name, kind, data) values(?,?,?)", "klm", 2, "of a kind")
+	const query = "insert into structs(name, kind, data) values(?,?,?)"
+
+	Exec(db, queryCreate)
+	Exec(db, query, "abc", 23, "what ev er")
+	Exec(db, query, "def", 69, "m'kay")
+	Exec(db, query, "hij", 42, "meaning of life")
+	Exec(db, query, "klm", 2, "of a kind")
+}
+
+func TestIsNumberInvalid(t *testing.T) {
+	if n := isNumber(nil); n {
+		t.Errorf("expected to not be numeric")
+	}
+
 }
 
 func TestBackup(t *testing.T) {
-	db, err := NewDBU(test_file, true)
+	db, err := Open(testFile, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 
-	prepare(db.DB)
-	v1, _ := db.Version()
-	t.Log("Version prior to backup:", v1)
-	t.Log("Backed up:", db.BackedUp)
-	t.Log("Changed prior to backup:", db.Changed())
+	prepare(db)
+	/*
+		v1, _ := DataVersion(db)
+		t.Log("Version prior to backup:", v1)
 
+		tlog := NewTestlog(t)
+		err = Backup(db, "test_backup.db", tlog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v2, _ := DBVersion("test.db")
+		t.Log("Version of backup:", v2)
+	*/
 	tlog := NewTestlog(t)
-	err = db.Backup("test_backup.db", tlog)
-	if err != nil {
+	if err := Backup(db, "test_backup.db", tlog); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("Changed post backup:", db.Changed())
-	v2, _ := DBVersion("test.db")
-	t.Log("Version of backup:", v2)
-	t.Log("Backed up:", db.BackedUp)
 }
 
 func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
@@ -523,7 +322,7 @@ func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
-	db, err := Open(test_file, true)
+	db, err := Open(testFile, true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -562,7 +361,7 @@ func TestMissingDB(t *testing.T) {
 }
 
 func BenchmarkQueryPrepared(b *testing.B) {
-	db, err := Open(test_file, true)
+	db, err := Open(testFile, true)
 	if err != nil {
 		b.Error(err)
 		return
@@ -602,11 +401,9 @@ func BenchmarkQueryPrepared(b *testing.B) {
 	}
 }
 
-func nullStream(columns []string, count int, buffer []interface{}, err error) {
-	x := make([]int, 23)
-	for _, buf := range toString(buffer) {
-		fmt.Fprintln(ioutil.Discard, buf, x)
-	}
+func nullStream(columns []string, count int, buffer []interface{}) error {
+	fmt.Fprintln(ioutil.Discard, buffer...)
+	return nil
 }
 
 func BenchmarkStream(b *testing.B) {
@@ -618,9 +415,39 @@ func BenchmarkStream(b *testing.B) {
 	prepare(dbs)
 
 	b.ResetTimer()
-	if err := Stream(dbs, nullStream, default_query); err != nil {
+	if err := Stream(dbs, nullStream, querySelect); err != nil {
 		b.Error(err)
 	}
+}
+
+func BenchmarkStreamToFile(b *testing.B) {
+	f, err := os.Create("streamed.txt")
+	if err != nil {
+		b.Fatalf("error creating dest file:%v\n", err)
+	}
+	fStream := func(columns []string, count int, buffer []interface{}) error {
+		tabs := len(buffer) - 1
+		for i, item := range buffer {
+			fmt.Fprint(f, item)
+			if i < tabs {
+				fmt.Fprint(f, "\t")
+			}
+		}
+		fmt.Fprint(f, "\n")
+		return nil
+	}
+	dbs, err := Open("stest.db", true)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	prepare(dbs)
+
+	//b.ResetTimer()
+	if err := Stream(dbs, fStream, querySelect); err != nil {
+		b.Fatal(err)
+	}
+	f.Close()
 }
 
 func BenchmarkStreamJSON(b *testing.B) {
@@ -634,17 +461,15 @@ func BenchmarkStreamJSON(b *testing.B) {
 	if testing.Verbose() {
 		w = os.Stdout
 	}
-	/*
-	 */
 
 	b.ResetTimer()
-	if err := StreamJSON(dbs, w, default_query); err != nil {
+	if err := StreamJSON(dbs, w, querySelect); err != nil {
 		b.Error(err)
 	}
 }
 
 const (
-	hammer_time = `
+	hammerTime = `
 drop table if exists hammer;
 
 create table hammer (
@@ -661,26 +486,27 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = 1;
 
 `
-	insert_hammer = `insert into hammer (worker, counter) values (?,?)`
+	hammerInsert = `insert into hammer (worker, counter) values (?,?)`
 )
 
 func hammer(t *testing.T, workers, count int) {
-
-	var wg sync.WaitGroup
-
 	db, err := hammerDB("")
 	if err != nil {
 		t.Error(err)
 		return
 	}
+	hammerDb(t, db, workers, count)
+}
 
+func hammerDb(t *testing.T, db *sql.DB, workers, count int) {
+	var wg sync.WaitGroup
 	queue := make(chan int, count)
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(worker int) {
 			t.Log("start worker:", worker)
 			for cnt := range queue {
-				if _, err := db.Exec(insert_hammer, worker, cnt); err != nil {
+				if _, err := db.Exec(hammerInsert, worker, cnt); err != nil {
 					t.Errorf("worker:%d count:%d, error:%s\n", worker, cnt, err.Error())
 				}
 			}
@@ -704,8 +530,8 @@ func hammerDB(name string) (*sql.DB, error) {
 	}
 	db, err := Open(name, true)
 	if err == nil {
-		//return db, Commands(db, hammer_time, testing.Verbose())
-		return db, Commands(db, hammer_time, false)
+		//return db, Commands(db, hammerTime, testing.Verbose())
+		return db, Commands(db, hammerTime, false)
 	}
 	return nil, err
 }
@@ -720,7 +546,7 @@ func errLogger(t *testing.T) chan error {
 	return e
 }
 
-func TestServer(t *testing.T) {
+func TestServerWrite(t *testing.T) {
 	db, err := hammerDB("")
 	if err != nil {
 		t.Fatal(err)
@@ -728,22 +554,24 @@ func TestServer(t *testing.T) {
 	r := make(chan Query, 4096)
 	w := make(chan Action, 4096)
 	e := errLogger(t)
-	go Server(db, r, w, e)
-	batter(t, r, w, 10, 100000)
+	go Server(db, r, w)
+	batter(t, w, 10, 100000)
 	close(r)
 	close(w)
 	close(e)
 }
 
-/*
-	reader := func(columns []string, row int, values []interface{}, err error) {
-		if row == 0 {
-			t.Log(columns)
-		}
-	}
-*/
+func TestServerRead(t *testing.T) {
+	db := fakeHammer(t, 10, 1000)
+	r := make(chan Query, 4096)
+	e := errLogger(t)
+	go Server(db, r, nil)
+	butter(t, r, 2, 10)
+	close(r)
+	close(e)
+}
 
-func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
+func batter(t *testing.T, w chan Action, workers, count int) {
 
 	var wg sync.WaitGroup
 
@@ -760,7 +588,7 @@ func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
 			for cnt := range queue {
 				wg.Add(1)
 				w <- Action{
-					Query:    insert_hammer,
+					Query:    hammerInsert,
 					Args:     []interface{}{worker, cnt},
 					Callback: response,
 				}
@@ -777,17 +605,186 @@ func batter(t *testing.T, r chan Query, w chan Action, workers, count int) {
 	t.Log("battered")
 }
 
-func TestInserterInvalidQuery(t *testing.T) {
+func Xbatter(t *testing.T, r chan Query, w chan Action, workers, count int) {
+
+	var wg sync.WaitGroup
+
+	response := func(affected, last int64, err error) {
+		//	t.Logf("aff:%d last:%d err:%v\n", affected, last, err)
+		wg.Done()
+	}
+
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for cnt := range queue {
+				wg.Add(1)
+				w <- Action{
+					Query:    hammerInsert,
+					Args:     []interface{}{worker, cnt},
+					Callback: response,
+				}
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	t.Log("battered")
+}
+
+func testReceiver(t *testing.T, callback chan int) RowFunc {
+	var tally int
+	go func() {
+		callback <- tally
+	}()
+
+	return func(columns []string, row int, values []interface{}) error {
+		if row == 0 {
+			t.Logf("columns: %v\n", columns)
+		}
+		t.Logf("row:%d values:%v\n", row, values)
+		tally++
+		return nil
+	}
+}
+
+func makeReader(t *testing.T, r chan Query, queue, workers, count int) func(query string, args ...interface{}) chan int {
+	return func(query string, args ...interface{}) chan int {
+		cb := make(chan int)
+		tr := testReceiver(t, cb)
+		qc := make(chan int, queue)
+		ec := make(chan error, count)
+		var wg sync.WaitGroup
+		go func() {
+			for err := range ec {
+				fmt.Println("err back:", err)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wg.Done()
+			}
+		}()
+
+		go func() {
+			for i := 0; i < workers; i++ {
+				fmt.Println("WORKER:", i)
+				wg.Add(1)
+				go func(worker int) {
+					t.Logf("worker:%d\n", worker)
+					for _ = range qc {
+						r <- Query{
+							Query: query,
+							Args:  args,
+							Reply: tr,
+							Error: ec,
+						}
+						fmt.Println("added query:", worker)
+					}
+					wg.Done()
+					t.Logf("done:%d\n", worker)
+				}(i)
+			}
+			for i := 0; i < count; i++ {
+				qc <- i
+			}
+			close(qc)
+			wg.Wait()
+		}()
+		return cb
+	}
+}
+
+func butter(t *testing.T, r chan Query, workers, count int) {
+
+	limit := 100
+	var wg sync.WaitGroup
+
+	ec := make(chan error, count)
+	var tally int
+	replies := func(columns []string, row int, values []interface{}) error {
+		if row == 0 {
+			t.Logf("columns: %v\n", columns)
+		}
+		t.Logf("row:%d values:%v\n", row, values)
+		tally++
+		return nil
+	}
+
+	go func() {
+		for err := range ec {
+			if err != nil {
+				t.Fatal(err)
+			}
+			wg.Done()
+		}
+	}()
+
+	query := "select * from hammer limit ?"
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for _ = range queue {
+				wg.Add(1)
+				r <- Query{
+					Query: query,
+					Args:  []interface{}{limit},
+					Reply: replies,
+					Error: ec,
+				}
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	limit *= count
+	if tally != limit {
+		t.Errorf("expected %d rows but got back %d\n", limit, tally)
+	}
+	t.Log("buttered")
+}
+
+func TestInserterBadQuery(t *testing.T) {
 	db, err := hammerDB("bulk.db")
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
+	}
+
+	fn := func(err error) {
+		t.Log(err)
+	}
+
+	_, err = NewInserter(db, 4096, fn, queryBad)
+	if err == nil {
+		t.Error("expected query error")
+	}
+}
+
+func TestInserterClosed(t *testing.T) {
+	db, err := hammerDB("bulk.db")
+	if err != nil {
+		t.Fatal(err)
 		return
 	}
 
 	fn := func(err error) {
 		t.Log(err)
 	}
-	_, err = NewInserter(db, 4096, fn, "THIS IS NOT SQL")
+
+	_, err = NewInserter(db, 4096, fn, queryBad)
 	if err == nil {
 		t.Error("expected query error")
 	}
@@ -803,7 +800,7 @@ func TestInserter(t *testing.T) {
 	fn := func(err error) {
 		t.Log(err)
 	}
-	inserter, err := NewInserter(db, 4096, fn, insert_hammer)
+	inserter, err := NewInserter(db, 4096, fn, hammerInsert)
 	if err != nil {
 		t.Error(err)
 		return
@@ -857,22 +854,9 @@ func TestGetResultsEmpty(t *testing.T) {
 	}
 	var i int64
 	var ts string
-	query := "select id,ts from hammer limit 1 where id=-1"
+	query := "select id,ts from hammer limit 1 where ts='now'"
 	_, err = GetResults(db, query, nil, &i, &ts)
 	t.Logf("i = %d, ts = %s\n", i, ts)
-}
-
-func TestCreateQuery(t *testing.T) {
-	db := structDb(t)
-	s := testStruct{}
-	query := createQuery(s, false)
-	// select id,name,kind,data,modified from structs
-	if _, err := GetResults(db, query, nil, &s.ID, &s.Name, &s.Kind, &s.Data, &s.Modified); err != nil {
-		t.Error(err)
-	}
-	if !(s.ID > 0) {
-		t.Errorf("ID is 0: %+v", s)
-	}
 }
 
 func TestMapRow(t *testing.T) {
@@ -894,11 +878,10 @@ func TestMapRow(t *testing.T) {
 
 }
 
-func TestMapRowInvalidQuery(t *testing.T) {
+func TestMapRowBadQuery(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
-	query := "THIS IS NOT SQL"
-	_, err := MapRow(db, query)
+	_, err := MapRow(db, queryBad)
 	if err == nil {
 		t.Fatal("expected query error")
 	}
@@ -932,31 +915,10 @@ func TestRowStrings(t *testing.T) {
 	}
 }
 
-func TestDBUInsert(t *testing.T) {
-	db := structDBU(t)
-	query := "insert into structs(name, kind, data) values(?,?,?)"
-	args := []interface{}{"Blur", 13, "bugman"}
-	i, err := db.Insert(query, args...)
-	if err != nil {
-		t.Error(err)
-	}
-	if !(i > 0) {
-		t.Errorf("expected last row to be greater than zero: %d", i)
-	}
-}
-
-func TestObjectInsert(t *testing.T) {
-	db := structDBU(t)
-	s := testStruct{
-		Name: "Blur",
-		Kind: 13,
-	}
-	i, err := db.ObjectInsert(s)
-	if err != nil {
-		t.Error(err)
-	}
-	if !(i > 0) {
-		t.Errorf("expected last row to be greater than zero: %d", i)
+func TestRowStringsBadQuery(t *testing.T) {
+	db := structDb(t)
+	if _, err := RowStrings(db, queryBad); err == nil {
+		t.Fatalf("expected error for invalid query")
 	}
 }
 
@@ -974,18 +936,36 @@ func TestToString(t *testing.T) {
 		raw,
 		3.1415926,
 	}
-	text := toString(src)
+	text, err := toString(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if text[2] != u8 {
 		t.Errorf("expected: %s got: %s\n", u8, text[2])
+	}
+}
+
+type unknownStruct struct{}
+
+func TestToStringUnknownType(t *testing.T) {
+	const u8 = "8 uints"
+	unknown := unknownStruct{}
+	src := []interface{}{
+		nil,
+		"a string",
+		unknown,
+	}
+	_, err := toString(src)
+	if err == nil {
+		t.Fatal("expected error but got none")
 	}
 }
 
 func TestRowBadQuery(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
-	query := "select * from Xstructs where name=? and kind=?"
 	args := []interface{}{"abc", 23}
-	_, _, err := Row(db, query, args...)
+	_, _, err := Row(db, queryBad, args...)
 	if err == nil {
 		t.Error("expected query error")
 	}
@@ -1017,21 +997,11 @@ func TestExecEmpty(t *testing.T) {
 	}
 }
 
-func TestRunMissingArgs(t *testing.T) {
+func TestExecBadQuery(t *testing.T) {
 	db := structDb(t)
-	query := "insert into structs values(?,?,?,?,?)"
-	_, err := Run(db, true, query)
+	_, _, err := Exec(db, queryBad)
 	if err == nil {
-		t.Error("expected query error")
-	}
-}
-
-func TestRunInvalidQuery(t *testing.T) {
-	db := structDb(t)
-	query := "THIS IS NOT SQL"
-	_, err := Run(db, true, query)
-	if err == nil {
-		t.Error("expected query error")
+		t.Fatalf("expected error for invalid query")
 	}
 }
 
@@ -1067,11 +1037,14 @@ func TestGenerator(t *testing.T) {
 }
 
 func TestFilename(t *testing.T) {
-	db, err := NewDBU(test_file, true)
+	db, err := Open(testFile, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	if name := path.Base(Filename(db)); name != testFile {
+		t.Errorf("expected file name:%s got:%s\n", testFile, name)
+	}
+	db.Close()
 }
 
 func TestInsertMany(t *testing.T) {
@@ -1085,7 +1058,7 @@ func TestInsertMany(t *testing.T) {
 		{"many3", kind, "pie-hole"},
 		{"many4", kind, "pie-hole"},
 	}
-	if err := InsertMany(db, query, args); err != nil {
+	if err := InsertMany(db, query, args...); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1098,4 +1071,68 @@ func TestInsertMany(t *testing.T) {
 	if count != len(args) {
 		t.Errorf("expected %d rows but got %d rows instead\n", len(args), count)
 	}
+}
+
+func TestInsertManyClosedDb(t *testing.T) {
+	db := structDb(t)
+	db.Close()
+
+	kind := 314159
+	query := "insert into structs(name, kind, data) values(?,?,?)"
+	args := [][]interface{}{
+		{"many1", kind, "pie-hole"},
+		{"many2", kind, "pie-hole"},
+		{"many3", kind, "pie-hole"},
+		{"many4", kind, "pie-hole"},
+	}
+	if err := InsertMany(db, query, args...); err == nil {
+		t.Fatalf("expected error that db was closed")
+	}
+}
+
+func TestInsertManyMissingArgs(t *testing.T) {
+	db := structDb(t)
+	db.Close()
+
+	query := "insert into structs(name, kind, data) values(?,?,?)"
+	if err := InsertMany(db, query); err == nil {
+		t.Fatalf("expected error for missing args")
+	}
+}
+
+func TestInsertManyBadQuery(t *testing.T) {
+	db := structDb(t)
+	db.Close()
+
+	if err := InsertMany(db, queryBad); err == nil {
+		t.Fatalf("expected error for invalid query")
+	}
+}
+
+func TestQueryClosed(t *testing.T) {
+	db, err := Open(testFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	query := "select count(*) as count from structs"
+	var count int
+	if _, err = GetResults(db, query, nil, &count); err == nil {
+		t.Fatal("expected query error")
+	}
+	t.Logf("got expected error: %v\n", err)
+}
+
+func fakeHammer(t *testing.T, workers, count int) *sql.DB {
+	db, err := hammerDB("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < count; i++ {
+		worker := rand.Int() % workers
+		if _, err := db.Exec(hammerInsert, worker, i); err != nil {
+			t.Fatalf("worker:%d count:%d, error:%s\n", worker, i, err.Error())
+		}
+	}
+	return db
 }

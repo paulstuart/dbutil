@@ -33,7 +33,7 @@ var (
 //wal_checkpoint
 
 const (
-	pragma_list = `
+	pragmaList = `
 	application_id
 	auto_vacuum
 	automatic_index
@@ -73,13 +73,11 @@ const (
 )
 
 var (
-	pragmas     = strings.Fields(pragma_list)
-	c_comment   = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	sql_comment = regexp.MustCompile(`\s*--.*`)
+	pragmas     = strings.Fields(pragmaList)
+	commentC    = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	commentSQL  = regexp.MustCompile(`\s*--.*`)
 	readline    = regexp.MustCompile(`(\.read \S+)`)
-	numeric, _  = regexp.Compile("^[0-9]+(\\.[0-9])?$")
 	registry    = make(map[string]*sqlite3.SQLiteConn)
-	debug_db    = false
 	initialized = false
 )
 
@@ -120,12 +118,25 @@ func fromIPv4(ip string) int64 {
 	return (a << 24) + (b << 16) + (c << 8) + d
 }
 
+// SqliteFuncReg contains the fields necessary to register a custom Sqlite function
+type SqliteFuncReg struct {
+	Name string
+	Impl interface{}
+	Pure bool
+}
+
+// IPFuncs are functions to convert ipv4 to and from int32
+var IPFuncs = []SqliteFuncReg{
+	{"iptoa", toIPv4, true},
+	{"atoip", fromIPv4, true},
+}
+
 // The only way to get access to the sqliteconn, which is needed to be able to generate
 // a backup from the database while it is open. This is a less than satisfactory approach
 // because there's no way to have multiple instances open associate the connection with the DSN
 //
 // Since our use case is to normally have one instance open this should be workable for now
-func sqlInit(name, hook string) {
+func sqlInit(name, hook string, funcs ...SqliteFuncReg) {
 	imu.Lock()
 	defer imu.Unlock()
 	if initialized {
@@ -133,41 +144,41 @@ func sqlInit(name, hook string) {
 	}
 	initialized = true
 
-	sql.Register(name,
-		&sqlite3.SQLiteDriver{
-			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				if err := conn.RegisterFunc("iptoa", toIPv4, true); err != nil {
+	drvr := &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			for _, fn := range funcs {
+				if err := conn.RegisterFunc(fn.Name, fn.Impl, fn.Pure); err != nil {
 					return err
 				}
-				if err := conn.RegisterFunc("atoip", fromIPv4, true); err != nil {
-					return err
-				}
-				filename, err := ConnFilename(conn)
-				if err == nil {
-					register(filename, conn)
-				} else {
-					fmt.Println("Couldn't get filename for connection:", err)
-				}
+			}
+			if filename, err := ConnFilename(conn); err == nil {
+				register(filename, conn)
+			} else {
+				fmt.Println("couldn't get filename for connection:", err)
+			}
 
-				if len(hook) > 0 {
-					if _, err := conn.Exec(hook, nil); err != nil {
-						return errors.Wrapf(err, "Connection hook failed: %s", hook)
-					}
+			if len(hook) > 0 {
+				if _, err := conn.Exec(hook, nil); err != nil {
+					return errors.Wrapf(err, "connection hook failed: %s", hook)
 				}
+			}
 
-				return nil
-			},
-		})
+			return nil
+		},
+	}
+	sql.Register(name, drvr)
 }
 
-func OpenSqlite(file, name string, init bool) (*sql.DB, error) {
-	return OpenSqliteWithHook(file, name, "", init)
+// OpenSqlite returns a database
+func OpenSqlite(file, name string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
+	return OpenSqliteWithHook(file, name, "", init, funcs...)
 }
 
+// OpenSqliteWithHook returns a database with a connection hok
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
-func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
-	sqlInit(DriverName, hook)
+func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
+	sqlInit(DriverName, hook, funcs...)
 	if file != ":memory:" {
 		full, err := url.Parse(file)
 		if err != nil {
@@ -193,13 +204,14 @@ func OpenSqliteWithHook(file, name, hook string, init bool) (*sql.DB, error) {
 	return db, db.Ping()
 }
 
-// get filename of db
-func filename(db *sql.DB) string {
+// Filename returns the filename of the DB
+func Filename(db *sql.DB) string {
 	var seq, name, file string
 	GetResults(db, "PRAGMA database_list", nil, &seq, &name, &file)
 	return file
 }
 
+// ConnFilename returns the filename of the connection
 func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
 	var filename string
 	fn := func(cols []string, row int, values []driver.Value) error {
@@ -216,6 +228,7 @@ func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
 	return filename, err
 }
 
+// DBVersion returns the datafile version
 func DBVersion(file string) (uint64, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -233,6 +246,7 @@ func DBVersion(file string) (uint64, error) {
 	return a, nil
 }
 
+// Backup backs up the open database
 func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 	os.Remove(dest)
 
@@ -268,20 +282,7 @@ func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 	return err
 }
 
-func Filename(db *sql.DB) string {
-	buff := make([]string, 3)
-	dest := slptr(buff)
-	if err := Pragmatic(db, "database_list", dest...); err != nil {
-		return "filename error:" + err.Error()
-	}
-	return buff[2]
-}
-
-func Pragmatic(db *sql.DB, pragma string, dest ...interface{}) error {
-	row := db.QueryRow("PRAGMA " + pragma)
-	return row.Scan(dest...)
-}
-
+// Pragmas lists all relevant Sqlite pragmas
 func Pragmas(db *sql.DB, w io.Writer) {
 	for _, pragma := range pragmas {
 		row := db.QueryRow("PRAGMA " + pragma)
@@ -300,13 +301,17 @@ func File(db *sql.DB, file string, echo bool) error {
 	return Commands(db, string(out), echo)
 }
 
+func startsWith(data, sub string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(data)), strings.ToUpper(sub))
+}
+
 // Commands emulates the client reading a series of commands
 // TODO: is this available in the C api?
 func Commands(db *sql.DB, buffer string, echo bool) error {
 
 	// strip comments
-	clean := c_comment.ReplaceAll([]byte(buffer), []byte{})
-	clean = sql_comment.ReplaceAll(clean, []byte{})
+	clean := commentC.ReplaceAll([]byte(buffer), []byte{})
+	clean = commentSQL.ReplaceAll(clean, []byte{})
 
 	// .read gets a fake ';' to split on
 	clean = readline.ReplaceAll(clean, []byte("${1};"))
@@ -342,32 +347,44 @@ func Commands(db *sql.DB, buffer string, echo bool) error {
 		}
 		if _, err := db.Exec(line); err != nil {
 			return errors.Wrapf(err, "EXEC QUERY: %s FILE: %s", line, Filename(db))
-		} else if debugging() {
-			log.Println("QUERY:", line)
 		}
 	}
 	return nil
 }
 
 // ConnQuery executes a query on a driver connection
-//func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []interface{}), query string, args ...driver.Value) error {
 func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) error, query string, args ...driver.Value) error {
 	rows, err := conn.Query(query, args)
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
+
 	cols := rows.Columns()
 	cnt := 0
 	for {
 		buffer := make([]driver.Value, len(cols))
 		if err := rows.Next(buffer); err != nil {
-			if err != io.EOF {
-				return err
+			if err == io.EOF {
+				return nil
 			}
-			return nil
+			return err
 		}
 		fn(cols, cnt, buffer)
 		cnt++
 	}
-	return rows.Close()
+	return nil
+}
+
+// DataVersion returns the version number of the schema
+func DataVersion(db *sql.DB) (int64, error) {
+	var version int64
+	_, err := GetResults(db, "PRAGMA data_version", nil, &version)
+	return version, err
+}
+
+// Version returns the version of the sqlite library used
+// libVersion string, libVersionNumber int, sourceID string) {
+func Version() (string, int, string) {
+	return sqlite3.Version()
 }

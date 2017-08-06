@@ -3,43 +3,56 @@ package dbutil
 import (
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/pkg/errors"
 )
 
 var (
 	mu sync.Mutex
+
+	numeric = regexp.MustCompile("^[0-9]+(\\.[0-9])?$")
+	repl    = strings.NewReplacer(
+		"\n", "\\\\n",
+		"\t", "\\\\t",
+		"\r", "\\\\r",
+		`"`, `\"`,
+		"_", " ",
+		"-", " ",
+	)
 )
 
-func Debug(on bool) {
-	mu.Lock()
-	debug_db = on
-	mu.Unlock()
+const (
+	// DriverName is the default driver name to be registered
+	DriverName = "dbutil"
+)
+
+// Action represents an async write request to database
+type Action struct {
+	Query    string
+	Args     []interface{}
+	Callback func(int64, int64, error)
 }
 
-func debugging() bool {
-	mu.Lock()
-	enabled := debug_db
-	mu.Unlock()
-	return enabled
+// RowFunc is a function called for each row by Stream
+type RowFunc func([]string, int, []interface{}) error
+
+// Query represents an async read request to database
+type Query struct {
+	Query string
+	Args  []interface{}
+	Reply RowFunc
+	Error chan error
 }
 
-func logger(q string, args ...interface{}) {
-	if debugging() {
-		log.Println(spew.Sprintf("Q: %s, A: %v", q, args))
-	}
-}
-
-func toString(in []interface{}) []string {
+func toString(in []interface{}) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, col := range in {
 		var s string
@@ -61,28 +74,31 @@ func toString(in []interface{}) []string {
 		case sql.RawBytes:
 			s = string(v)
 		default:
-			log.Printf("unhandled type: %T", col)
+			return nil, fmt.Errorf("unhandled type: %T", col)
 		}
 		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
-func slptr(arr []string) []interface{} {
+/*
+func StringInterface(arr []string) []interface{} {
 	resp := make([]interface{}, 0, len(arr))
 	for i := range arr {
 		resp = append(resp, &arr[i])
 	}
 	return resp
 }
+*/
 
+// Row returns one row of the results of a query
 func Row(db *sql.DB, query string, args ...interface{}) ([]string, []interface{}, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	cols, _ := rows.Columns()
+	cols, _ := Columns(rows)
 	buff := make([]interface{}, len(cols))
 	dest := make([]interface{}, len(cols))
 	if !rows.Next() {
@@ -98,20 +114,29 @@ func Row(db *sql.DB, query string, args ...interface{}) ([]string, []interface{}
 	return cols, buff, err
 }
 
+// RowStrings returns the row results all as strings
 func RowStrings(db *sql.DB, query string, args ...interface{}) ([]string, error) {
 	_, row, err := Row(db, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	return toString(row), nil
+	return toString(row)
 }
 
+// Update runs an update query and returns the count of records updated, if any
+func Update(db *sql.DB, query string, args ...interface{}) (int64, error) {
+	_, mods, err := Exec(db, query, args...)
+	return mods, err
+}
+
+// Insert runs an insert query and returns the id of the last records inserted
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
 	last, _, err := Exec(db, query, args...)
 	return last, err
 }
 
-func InsertMany(db *sql.DB, query string, args [][]interface{}) error {
+// InsertMany inserts multiple records as a single transaction
+func InsertMany(db *sql.DB, query string, args ...[]interface{}) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -133,6 +158,7 @@ func InsertMany(db *sql.DB, query string, args [][]interface{}) error {
 	return nil
 }
 
+// Exec executes a query and returns the effected records info
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
 	query = strings.TrimSpace(query)
 	if 0 == len(query) {
@@ -145,32 +171,6 @@ func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, 
 	affected, _ = i.RowsAffected()
 	last, _ = i.LastInsertId()
 	return affected, last, nil
-}
-
-func Run(db *sql.DB, insert bool, query string, args ...interface{}) (int64, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-	defer stmt.Close()
-	result, err := stmt.Exec(args...)
-	if err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-	var i int64
-	if insert {
-		i, err = result.LastInsertId()
-	} else {
-		i, err = result.RowsAffected()
-	}
-	tx.Commit()
-	return i, err
 }
 
 // Inserter manages bulk inserts
@@ -237,16 +237,32 @@ func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ..
 	}, nil
 }
 
+// Columns returns a slice of column names that respects aliases in the query
+func Columns(row *sql.Rows) ([]string, error) {
+	ctypes, err := row.ColumnTypes()
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(ctypes))
+	for i, c := range ctypes {
+		columns[i] = c.Name()
+	}
+	return columns, nil
+}
+
 // Stream streams the query results to function fn
-func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query string, args ...interface{}) error {
+func Stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
 	}
-	columns, err := rows.Columns()
+	defer rows.Close()
+
+	columns, err := Columns(rows)
 	if err != nil {
 		return err
 	}
+
 	i := 0
 	for rows.Next() {
 		buffer := make([]interface{}, len(columns))
@@ -254,25 +270,30 @@ func Stream(db *sql.DB, fn func([]string, int, []interface{}, error), query stri
 		for k := 0; k < len(buffer); k++ {
 			dest[k] = &buffer[k]
 		}
-		err = rows.Scan(dest...)
-		if err != nil {
-			log.Println("BAD SCAN:", rows)
+		if err = rows.Scan(dest...); err != nil {
+			return errors.Wrapf(err, "bad scan: %v", rows)
 		}
-		fn(columns, i, buffer, err)
+		if err := fn(columns, i, buffer); err != nil {
+			return err
+		}
 		i++
 	}
-	rows.Close()
 	return err
 }
 
 // StreamCSV streams the query results as a comma separated file
 func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
 	cw := csv.NewWriter(w)
-	fn := func(columns []string, count int, buffer []interface{}, err error) {
+	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
 			cw.Write(columns)
 		}
-		cw.Write(toString(buffer))
+		if s, err := toString(buffer); err != nil {
+			return err
+		} else {
+			cw.Write(s)
+		}
+		return nil
 	}
 	defer cw.Flush()
 	return Stream(db, fn, query, args...)
@@ -280,36 +301,65 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 
 // StreamTab streams the query results as a tab separated file
 func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}, err error) {
+	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
-		fmt.Fprintln(w, strings.Join(toString(buffer), "\t"))
+		if s, err := toString(buffer); err != nil {
+			return err
+		} else {
+			fmt.Fprintln(w, strings.Join(s, "\t"))
+		}
+		return nil
 	}
 	return Stream(db, fn, query, args...)
 }
 
+func isNumber(d interface{}) bool {
+	switch d := d.(type) {
+	case int, int32, int64, float32, float64:
+		return true
+	case string:
+		// multiple leading zeros is likely a string
+		if strings.HasPrefix(d, "00") {
+			return false
+		}
+		return numeric.Match([]byte(strings.TrimSpace(d)))
+	default:
+		return false
+	}
+}
+
 // StreamJSON streams the query results as JSON to the writer
 func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
-	fn := func(columns []string, count int, buffer []interface{}, err error) {
+	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count > 0 {
 			fmt.Fprintln(w, ",")
 		}
-		fmt.Fprintln(w, "  {")
-		repl := strings.NewReplacer("\n", "\\\\n", "\t", "\\\\t", "\r", "\\\\r", `"`, `\"`)
-		for i, s := range toString(buffer) {
-			comma := ",\n"
-			if i >= len(buffer)-1 {
-				comma = "\n"
-			}
-			if isNumber(s) {
-				fmt.Fprintf(w, `    "%s": %s%s`, columns[i], s, comma)
-			} else {
-				s = repl.Replace(s)
-				fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
-			}
+		obj := make(map[string]interface{})
+		for i, c := range columns {
+			obj[c] = buffer[i]
 		}
-		fmt.Fprint(w, "  }")
+		enc := json.NewEncoder(w)
+		return enc.Encode(obj)
+		/*
+			fmt.Fprintln(w, "  {")
+			for i, b := range buffer {
+				comma := ",\n"
+				if i >= len(buffer)-1 {
+					comma = "\n"
+				}
+				if isNumber(b) {
+					fmt.Fprintf(w, `    "%s": %v%s`, columns[i], b, comma)
+				} else {
+					//s := fmt.Sprintf("%v", b)
+					//s = repl.Replace(s)
+					//fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
+					fmt.Fprintf(w, `    "%s": "%v"%s`, columns[i], s, comma)
+				}
+			}
+			fmt.Fprint(w, "  }")
+		*/
 	}
 	fmt.Fprintln(w, "[")
 	defer fmt.Fprintln(w, "\n]")
@@ -329,10 +379,12 @@ func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
 // Iterator returns query results
 type Iterator func() (values []interface{}, ok bool)
 
+// Generator returns an iterator for a query
 func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
 	c := make(chan []interface{})
-	fn := func(columns []string, row int, values []interface{}, err error) {
+	fn := func(columns []string, row int, values []interface{}) error {
 		c <- values
+		return nil
 	}
 	iter := func() ([]interface{}, bool) {
 		values, ok := <-c
@@ -348,74 +400,22 @@ func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interfac
 	return iter
 }
 
-type MetaData struct {
-	Column string
-	Type   reflect.Type
-}
-
-func Streamer(db *sql.DB, query string, args ...interface{}) ([]MetaData, Iterator, error) {
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, nil, err
-	}
-	columns, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, nil, err
-	}
-	meta := make([]MetaData, 0, len(columns))
-	for _, c := range columns {
-		m := MetaData{
-			Column: c.Name(),
-			Type:   c.ScanType(),
-		}
-		meta = append(meta, m)
-	}
-
-	c := make(chan []interface{})
-	iter := func() ([]interface{}, bool) {
-		values, ok := <-c
-		return values, ok
-	}
-	go func() {
-		for rows.Next() {
-			buffer := make([]interface{}, len(columns))
-			dest := make([]interface{}, len(columns))
-			for k := 0; k < len(buffer); k++ {
-				dest[k] = &buffer[k]
-			}
-			err = rows.Scan(dest...)
-			if err != nil {
-				log.Println("BAD SCAN:", rows)
-			}
-			c <- buffer
-		}
-		rows.Close()
-		close(c)
-	}()
-	return meta, iter, nil
-}
-
-type Action struct {
-	Query    string
-	Args     []interface{}
-	Callback func(int64, int64, error)
-}
-
-type Query struct {
-	Query string
-	Args  []interface{}
-	Reply func([]string, int, []interface{}, error)
-}
-
 // Server provides serialized access to the database
-func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
+//func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
+func Server(db *sql.DB, r chan Query, w chan Action) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		for q := range r {
-			if err := Stream(db, q.Reply, q.Query, q.Args...); err != nil && e != nil {
+			err := Stream(db, q.Reply, q.Query, q.Args...)
+
+			if q.Error != nil {
+				// use goroutine so we don't block on sending errors
 				go func() {
-					e <- errors.Wrapf(err, "Stream error")
+					if err != nil {
+						err = errors.Wrapf(err, "stream error")
+					}
+					q.Error <- err
 				}()
 			}
 		}
@@ -430,7 +430,6 @@ func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
 		wg.Done()
 	}()
 	wg.Wait()
-	db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 }
 
 // GetResults writes to the record slice
@@ -442,7 +441,7 @@ func GetResults(db *sql.DB, query string, args []interface{}, record ...interfac
 	if !rows.Next() {
 		return nil, nil
 	}
-	cols, _ := rows.Columns()
+	cols, _ := Columns(rows)
 	return cols, rows.Scan(record...)
 }
 
@@ -456,7 +455,7 @@ func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface
 		return nil, nil
 	}
 
-	cols, _ := rows.Columns()
+	cols, _ := Columns(rows)
 	buff := make([]interface{}, len(cols))
 	dest := make([]interface{}, len(cols))
 	for i := range buff {
