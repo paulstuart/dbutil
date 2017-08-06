@@ -180,7 +180,10 @@ func OpenSqlite(file, name string, init bool, funcs ...SqliteFuncReg) (*sql.DB, 
 // struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
 //  where key and table are used for a single entry
 func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
-	sqlInit(DriverName, hook, funcs...)
+	if len(name) == 0 {
+		name = "sqlite3"
+	}
+	sqlInit(name, hook, funcs...)
 	if file != ":memory:" {
 		full, err := url.Parse(file)
 		if err != nil {
@@ -195,9 +198,6 @@ func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncR
 		} else if _, err := os.Stat(filename); os.IsNotExist(err) {
 			return nil, err
 		}
-	}
-	if len(name) == 0 {
-		name = "sqlite3"
 	}
 	db, err := sql.Open(name, file)
 	if err != nil {
@@ -228,24 +228,6 @@ func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
 	}
 	err := ConnQuery(conn, fn, "PRAGMA database_list")
 	return filename, err
-}
-
-// DBVersion returns the datafile version
-func DBVersion(file string) (uint64, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	b := make([]byte, 4)
-	f.ReadAt(b, 24)
-
-	var a uint64
-	a += uint64(b[0]) << 24
-	a += uint64(b[1]) << 16
-	a += uint64(b[2]) << 8
-	a += uint64(b[3])
-	return a, nil
 }
 
 // Backup backs up the open database

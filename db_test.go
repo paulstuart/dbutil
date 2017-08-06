@@ -662,13 +662,17 @@ func TestInserterMissingArgs(t *testing.T) {
 	defer Close(db)
 
 	fn := func(err error) {
-		t.Log(err)
+		if err == nil {
+			t.Fatal("expected missing args error")
+		} else {
+			t.Log(err)
+		}
 	}
 	inserter, err := NewInserter(db, 4096, fn, hammerInsert)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slam(t, inserter, 10, 1000000)
+	inserter.Insert(1)
 }
 
 func TestInserter(t *testing.T) {

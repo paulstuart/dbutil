@@ -215,7 +215,7 @@ func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ..
 				if errFn != nil {
 					errFn(err)
 				}
-				break
+				return
 			}
 		}
 		i, err := result.LastInsertId()
