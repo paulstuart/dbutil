@@ -333,7 +333,7 @@ func Commands(db *sql.DB, buffer string, echo bool) error {
 			echo, _ = strconv.ParseBool(line[6:])
 			continue
 		case strings.HasPrefix(line, ".read "):
-			name := strings.TrimSpace(line[7:])
+			name := strings.TrimSpace(line[6:])
 			if err := File(db, name, echo); err != nil {
 				return errors.Wrapf(err, "read file: %s", name)
 			}

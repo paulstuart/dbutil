@@ -1,5 +1,7 @@
 .echo on
 
+.print starting off 
+
 PRAGMA foreign_keys=OFF;
 PRAGMA journal_mode = WAL;
 
@@ -35,3 +37,4 @@ BEGIN
     insert into old_sites select sti, name from sites where sti = OLD.sti;
 END;
 
+.read test2.sql

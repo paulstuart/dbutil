@@ -7,7 +7,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"path"
 	"sync"
 	"testing"
 	"testing/iotest"
@@ -36,52 +35,6 @@ func init() {
 
 }
 
-func TestFuncs(t *testing.T) {
-	sqlInit(DriverName, "", IPFuncs...)
-	db, err := sql.Open("dbutil", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	const create = `create table if not exists iptest ( ip int )`
-	const ins = `
-insert into iptest values(atoip('127.0.0.1'));
-insert into iptest values(atoip('192.168.1.1'));
-`
-	if _, err = db.Exec(create); err != nil {
-		t.Fatalf("%q: %s\n", err, create)
-	}
-
-	if _, err = db.Exec(ins); err != nil {
-		t.Fatalf("%q: %s\n", err, ins)
-	}
-
-	const testIP = "192.168.1.1"
-	var ipv4 string
-	args := []interface{}{testIP}
-	GetResults(db, "select iptoa(ip) as ipv4 from iptest where ipv4 = ?", args, &ipv4)
-	if ipv4 != testIP {
-		t.Errorf("expected: %s but got: %s\n", testIP, ipv4)
-	}
-}
-
-func TestSqliteBadHook(t *testing.T) {
-	const badDriver = "badhook"
-	sqlInit(badDriver, queryBad)
-	db, err := sql.Open(badDriver, ":memory:")
-	defer db.Close()
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DataVersion(db); err == nil {
-		t.Fatal("expected error for bad hook")
-	} else {
-		t.Logf("got expected hook error: %v\n", err)
-	}
-}
-
 /*
 func TestSqliteFilename(t *testing.T) {
 	sqlInit(DriverName, "")
@@ -91,25 +44,6 @@ func TestSqliteFilename(t *testing.T) {
 	}
 }
 */
-func TestSqliteBadPath(t *testing.T) {
-	sqlInit(DriverName, "")
-	_, err := Open("/PATH/DOES/NOT/EXIST/DUDE.db", true)
-	if err == nil {
-		t.Fatal("expected error for bad path")
-	} else {
-		t.Logf("got expected error: %v\n", err)
-	}
-}
-
-func TestSqliteBadURI(t *testing.T) {
-	sqlInit(DriverName, "")
-	_, err := Open("test.db ! % # mode ro bad=", true)
-	if err == nil {
-		t.Fatal("expected error for bad uri")
-	} else {
-		t.Logf("got expected error: %v\n", err)
-	}
-}
 
 func TestSqliteCreate(t *testing.T) {
 	db, err := Open(testFile, true)
@@ -182,15 +116,6 @@ func structDb(t *testing.T) *sql.DB {
 	db := memDB(t)
 	prepare(db)
 	return db
-}
-
-func TestVersion(t *testing.T) {
-	_, i, _ := Version()
-	if i < 3017000 {
-		t.Errorf("old version: %d\n", i)
-	} else {
-		t.Log(i)
-	}
 }
 
 func TestStream(t *testing.T) {
@@ -311,48 +236,6 @@ func TestIsNumberInvalid(t *testing.T) {
 		t.Errorf("expected to not be numeric")
 	}
 
-}
-
-func TestBackup(t *testing.T) {
-	db, err := Open(testFile, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	prepare(db)
-	/*
-		v1, _ := DataVersion(db)
-		t.Log("Version prior to backup:", v1)
-
-		tlog := NewTestlog(t)
-		err = Backup(db, "test_backup.db", tlog)
-		if err != nil {
-			t.Fatal(err)
-		}
-		v2, _ := DBVersion("test.db")
-		t.Log("Version of backup:", v2)
-	*/
-	tlog := NewTestlog(t)
-	if err := Backup(db, "test_backup.db", tlog); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func dump(t *testing.T, db *sql.DB, query string, args ...interface{}) {
-	rows, err := db.Query(query)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dest := make([]interface{}, len(args))
-	for i, f := range args {
-		dest[i] = &f
-	}
-	for rows.Next() {
-		rows.Scan(dest...)
-		t.Log(args...)
-	}
-	rows.Close()
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
@@ -605,40 +488,6 @@ func TestServerRead(t *testing.T) {
 }
 
 func batter(t *testing.T, w chan Action, workers, count int) {
-
-	var wg sync.WaitGroup
-
-	response := func(affected, last int64, err error) {
-		//	t.Logf("aff:%d last:%d err:%v\n", affected, last, err)
-		wg.Done()
-	}
-
-	queue := make(chan int, 4096)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(worker int) {
-			t.Logf("worker:%d\n", worker)
-			for cnt := range queue {
-				wg.Add(1)
-				w <- Action{
-					Query:    hammerInsert,
-					Args:     []interface{}{worker, cnt},
-					Callback: response,
-				}
-			}
-			wg.Done()
-			t.Logf("done:%d\n", worker)
-		}(i)
-	}
-	for i := 0; i < count; i++ {
-		queue <- i
-	}
-	close(queue)
-	wg.Wait()
-	t.Log("battered")
-}
-
-func Xbatter(t *testing.T, r chan Query, w chan Action, workers, count int) {
 
 	var wg sync.WaitGroup
 
@@ -1069,17 +918,6 @@ func TestGenerator(t *testing.T) {
 	}
 }
 
-func TestFilename(t *testing.T) {
-	db, err := Open(testFile, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name := path.Base(Filename(db)); name != testFile {
-		t.Errorf("expected file name:%s got:%s\n", testFile, name)
-	}
-	db.Close()
-}
-
 func TestInsertMany(t *testing.T) {
 	db := structDb(t)
 
@@ -1170,27 +1008,10 @@ func fakeHammer(t *testing.T, workers, count int) *sql.DB {
 	return db
 }
 
-func TestFile(t *testing.T) {
-	db := memDB(t)
-	if err := File(db, "test.sql", testing.Verbose()); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-}
-
 func memDB(t *testing.T) *sql.DB {
 	db, err := Open(":memory:", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return db
-}
-
-func TestPragmas(t *testing.T) {
-	db := memDB(t)
-	w := ioutil.Discard
-	if testing.Verbose() {
-		w = os.Stdout
-	}
-	Pragmas(db, w)
 }
