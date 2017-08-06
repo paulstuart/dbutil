@@ -146,23 +146,20 @@ func TestSqliteUpdate(t *testing.T) {
 }
 
 func structDb(t *testing.T) *sql.DB {
-	db, err := Open(":memory:", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := memDB(t)
 	prepare(db)
 	return db
 }
 
-/*
-func TestVersionPost(t *testing.T) {
-	v, err := test_db.Version()
-	if err != nil {
-		t.Error(err)
+func TestVersion(t *testing.T) {
+	_, i, _ := Version()
+	if i < 3017000 {
+		t.Errorf("old version: %d\n", i)
+	} else {
+		t.Log(i)
 	}
-	t.Log("VERSION POST:", v)
 }
-*/
+
 func TestStream(t *testing.T) {
 	db := structDb(t)
 	myStream := func(columns []string, count int, buffer []interface{}) error {
@@ -176,8 +173,7 @@ func TestStream(t *testing.T) {
 		}
 		return nil
 	}
-	query := "select id,name,kind,modified from structs"
-	if err := Stream(db, myStream, query); err != nil {
+	if err := Stream(db, myStream, querySelect); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -195,42 +191,45 @@ func TestStreamBadQuery(t *testing.T) {
 	}
 }
 
+func TestStreamBadFunc(t *testing.T) {
+	db := structDb(t)
+	myStream := func(columns []string, count int, buffer []interface{}) error {
+		return fmt.Errorf("bad func, no biscuit!")
+	}
+	if err := Stream(db, myStream, querySelect); err == nil {
+		t.Fatal("expected query error")
+	}
+}
+
 type Writer struct {
 	Prefix string
 }
 
 func (w *Writer) Write(p []byte) (n int, err error) {
-	/*
-		fmt.Print(w.Prefix)
-		return fmt.Print(string(p))
-	*/
 	return fmt.Fprint(ioutil.Discard, string(p))
 }
 
 func TestStreamCSV(t *testing.T) {
 	db := structDb(t)
-	query := "select id,name,kind from structs"
 	w := &Writer{"CSV:"}
 
-	if err := StreamCSV(db, w, query); err != nil {
+	if err := StreamCSV(db, w, querySelect); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestStreamTab(t *testing.T) {
 	db := structDb(t)
-	query := "select id,name,kind from structs"
 	w := &Writer{"TAB:"}
-	if err := StreamTab(db, w, query); err != nil {
+	if err := StreamTab(db, w, querySelect); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
-	query := "select id,name,kind from structs"
 	out := (*twriter)(t)
-	err := StreamJSON(db, out, query)
+	err := StreamJSON(db, out, querySelect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +531,6 @@ func hammerDB(name string) (*sql.DB, error) {
 	}
 	db, err := Open(name, true)
 	if err == nil {
-		//return db, Commands(db, hammerTime, testing.Verbose())
 		return db, Commands(db, hammerTime, false)
 	}
 	return nil, err
@@ -1137,4 +1135,29 @@ func fakeHammer(t *testing.T, workers, count int) *sql.DB {
 		}
 	}
 	return db
+}
+
+func TestFile(t *testing.T) {
+	db := memDB(t)
+	if err := File(db, "test.sql", testing.Verbose()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+}
+
+func memDB(t *testing.T) *sql.DB {
+	db, err := Open(":memory:", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func TestPragmas(t *testing.T) {
+	db := memDB(t)
+	w := ioutil.Discard
+	if testing.Verbose() {
+		w = os.Stdout
+	}
+	Pragmas(db, w)
 }

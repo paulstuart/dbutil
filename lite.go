@@ -324,24 +324,28 @@ func Commands(db *sql.DB, buffer string, echo bool) error {
 			continue
 		}
 		if echo {
-			fmt.Println(line)
+			fmt.Println("LINE:", line)
 		}
-		if strings.HasPrefix(line, ".read ") {
+		switch {
+		case strings.HasPrefix(line, ".echo "):
+			echo, _ = strconv.ParseBool(line[6:])
+			continue
+		case strings.HasPrefix(line, ".read "):
 			name := strings.TrimSpace(line[7:])
 			if err := File(db, name, echo); err != nil {
 				return errors.Wrapf(err, "read file: %s", name)
 			}
 			continue
-		} else if strings.HasPrefix(line, ".print ") {
+		case strings.HasPrefix(line, ".print "):
 			fmt.Println(strings.Trim(strings.TrimSpace(line[7:]), "'"))
 			continue
-		} else if startsWith(line, "CREATE TRIGGER") {
+		case startsWith(line, "CREATE TRIGGER"):
 			multiline = line
 			continue
-		} else if startsWith(line, "END") {
+		case startsWith(line, "END"):
 			line = multiline + ";\n" + line
 			multiline = ""
-		} else if len(multiline) > 0 {
+		case len(multiline) > 0:
 			multiline += ";\n" + line // restore our 'split' transaction
 			continue
 		}
