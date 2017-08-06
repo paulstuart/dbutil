@@ -73,12 +73,13 @@ const (
 )
 
 var (
-	pragmas     = strings.Fields(pragmaList)
-	commentC    = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	commentSQL  = regexp.MustCompile(`\s*--.*`)
-	readline    = regexp.MustCompile(`(\.read \S+)`)
+	pragmas    = strings.Fields(pragmaList)
+	commentC   = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	commentSQL = regexp.MustCompile(`\s*--.*`)
+	readline   = regexp.MustCompile(`(\.read \S+)`)
+
 	registry    = make(map[string]*sqlite3.SQLiteConn)
-	initialized = false
+	initialized = make(map[string]struct{})
 )
 
 func register(file string, conn *sqlite3.SQLiteConn) {
@@ -139,10 +140,11 @@ var IPFuncs = []SqliteFuncReg{
 func sqlInit(name, hook string, funcs ...SqliteFuncReg) {
 	imu.Lock()
 	defer imu.Unlock()
-	if initialized {
+
+	if _, ok := initialized[name]; ok {
 		return
 	}
-	initialized = true
+	initialized[name] = struct{}{}
 
 	drvr := &sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {

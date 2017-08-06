@@ -67,14 +67,47 @@ insert into iptest values(atoip('192.168.1.1'));
 }
 
 func TestSqliteBadHook(t *testing.T) {
-	db, err := OpenSqliteWithHook(":memory:", DriverName, queryBad, true)
+	const badDriver = "badhook"
+	sqlInit(badDriver, queryBad)
+	db, err := sql.Open(badDriver, ":memory:")
 	defer db.Close()
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DataVersion(db); err != nil {
+	if _, err := DataVersion(db); err == nil {
 		t.Fatal("expected error for bad hook")
+	} else {
+		t.Logf("got expected hook error: %v\n", err)
+	}
+}
+
+/*
+func TestSqliteFilename(t *testing.T) {
+	sqlInit(DriverName, "")
+	db, err := Open(":memory:", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+*/
+func TestSqliteBadPath(t *testing.T) {
+	sqlInit(DriverName, "")
+	_, err := Open("/PATH/DOES/NOT/EXIST/DUDE.db", true)
+	if err == nil {
+		t.Fatal("expected error for bad path")
+	} else {
+		t.Logf("got expected error: %v\n", err)
+	}
+}
+
+func TestSqliteBadURI(t *testing.T) {
+	sqlInit(DriverName, "")
+	_, err := Open("test.db ! % # mode ro bad=", true)
+	if err == nil {
+		t.Fatal("expected error for bad uri")
+	} else {
+		t.Logf("got expected error: %v\n", err)
 	}
 }
 

@@ -25,28 +25,19 @@ func underlines(cols []interface{}) []interface{} {
 	return u
 }
 
-func reverse(s []string) {
-	for i := 0; i < len(s)/2; i++ {
-		x := len(s) - i - 1
-		s[i], s[x] = s[x], s[i]
-	}
-}
-
 // Tabular returns a Writer and a RowFunc for using with Stream()
 func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 	if nil == w {
 		w = os.Stdout
 	}
 
-	//tw := tabwriter.NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer
+	// tabwriter.NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer
 	// Format in tab-separated columns with a tab stop of 8.
 	tw := tabwriter.NewWriter(w, 0, 8, 1, ' ', 0)
-	//tw := tabwriter.NewWriter(w, 0, 6, 3, ' ', 0)
 
 	rower := func(values ...interface{}) {
 		tabs := len(values) - 1
 		for i, v := range values {
-			//fmt.Printf("V (%T) %v\n", v, v)
 			switch v := v.(type) {
 			case []uint8:
 				fmt.Fprint(tw, string(v))
@@ -67,10 +58,9 @@ func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 			for i, col := range columns {
 				head[i] = repl.Replace(col)
 			}
-			fmt.Fprint(tw, "rowid", "\t")
 			rower(head...)
+			rower(underlines(head)...)
 		}
-		fmt.Fprint(tw, row, "\t")
 		rower(values...)
 		return nil
 	}
