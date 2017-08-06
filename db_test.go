@@ -67,7 +67,7 @@ insert into iptest values(atoip('192.168.1.1'));
 }
 
 func TestSqliteBadHook(t *testing.T) {
-	db, err := OpenSqliteWithHook(testFile, DriverName, queryBad, true)
+	db, err := OpenSqliteWithHook(":memory:", DriverName, queryBad, true)
 	defer db.Close()
 
 	if err != nil {
@@ -121,8 +121,8 @@ func TestSqliteDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
 	}
-	db.Close()
 	t.Log("DELETED: ", cnt)
+	db.Close()
 }
 
 func TestSqliteInsert(t *testing.T) {
@@ -132,6 +132,7 @@ func TestSqliteInsert(t *testing.T) {
 		t.Log("INSERT ERROR: ", err)
 	}
 	t.Log("INSERTED: ", cnt)
+	db.Close()
 }
 
 func TestSqliteUpdate(t *testing.T) {
@@ -141,6 +142,7 @@ func TestSqliteUpdate(t *testing.T) {
 		t.Log("UPDATE ERROR: ", err)
 	}
 	t.Log("UPDATED: ", cnt)
+	db.Close()
 }
 
 func structDb(t *testing.T) *sql.DB {
