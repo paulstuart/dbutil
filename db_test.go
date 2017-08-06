@@ -152,7 +152,7 @@ func TestStreamBadQuery(t *testing.T) {
 func TestStreamBadFunc(t *testing.T) {
 	db := structDb(t)
 	myStream := func(columns []string, count int, buffer []interface{}) error {
-		return fmt.Errorf("bad func, no biscuit!")
+		return fmt.Errorf("bad func, no biscuit")
 	}
 	if err := Stream(db, myStream, querySelect); err == nil {
 		t.Fatal("expected query error")

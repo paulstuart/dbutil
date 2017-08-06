@@ -290,9 +290,8 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		}
 		if s, err := toString(buffer); err != nil {
 			return err
-		} else {
-			cw.Write(s)
 		}
+		cw.Write(s)
 		return nil
 	}
 	defer cw.Flush()
@@ -307,9 +306,8 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		}
 		if s, err := toString(buffer); err != nil {
 			return err
-		} else {
-			fmt.Fprintln(w, strings.Join(s, "\t"))
 		}
+		fmt.Fprintln(w, strings.Join(s, "\t"))
 		return nil
 	}
 	return Stream(db, fn, query, args...)
