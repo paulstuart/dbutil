@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/url"
 	"os"
 	"path"
@@ -110,6 +109,7 @@ func toIPv4(ip int64) string {
 func fromIPv4(ip string) int64 {
 	octets := strings.Split(ip, ".")
 	if len(octets) != 4 {
+		panic("nopes")
 		return -1
 	}
 	a, _ := strconv.ParseInt(octets[0], 10, 64)
@@ -156,7 +156,7 @@ func sqlInit(name, hook string, funcs ...SqliteFuncReg) {
 			if filename, err := ConnFilename(conn); err == nil {
 				register(filename, conn)
 			} else {
-				fmt.Println("couldn't get filename for connection:", err)
+				return errors.Wrapf(err, "couldn't get filename for connection: %+v", conn)
 			}
 
 			if len(hook) > 0 {
@@ -181,7 +181,7 @@ func OpenSqlite(file, name string, init bool, funcs ...SqliteFuncReg) (*sql.DB, 
 //  where key and table are used for a single entry
 func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
 	if len(name) == 0 {
-		name = "sqlite3"
+		name = DriverName
 	}
 	sqlInit(name, hook, funcs...)
 	if file != ":memory:" {
@@ -209,7 +209,7 @@ func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncR
 // Filename returns the filename of the DB
 func Filename(db *sql.DB) string {
 	var seq, name, file string
-	GetResults(db, "PRAGMA database_list", nil, &seq, &name, &file)
+	Get(db, "PRAGMA database_list", nil, &seq, &name, &file)
 	return file
 }
 
@@ -231,7 +231,11 @@ func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
 }
 
 // Backup backs up the open database
-func Backup(db *sql.DB, dest string, logger *log.Logger) error {
+func Backup(db *sql.DB, dest string) error {
+	return backup(db, dest, 1024, ioutil.Discard)
+}
+
+func backup(db *sql.DB, dest string, step int, w io.Writer) error {
 	os.Remove(dest)
 
 	destDb, err := OpenSqlite(dest, DriverName, true)
@@ -254,12 +258,9 @@ func Backup(db *sql.DB, dest string, logger *log.Logger) error {
 
 	defer bk.Finish()
 	for {
-		logger.Println("pagecount:", bk.PageCount(), "remaining:", bk.Remaining())
-		done, err := bk.Step(1024)
-		if err != nil {
-			return err
-		}
-		if done {
+		fmt.Fprintf(w, "pagecount: %d remaining: %d\n", bk.PageCount(), bk.Remaining())
+		done, err := bk.Step(step)
+		if done || err != nil {
 			break
 		}
 	}
@@ -372,7 +373,7 @@ func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) 
 // DataVersion returns the version number of the schema
 func DataVersion(db *sql.DB) (int64, error) {
 	var version int64
-	_, err := GetResults(db, "PRAGMA data_version", nil, &version)
+	_, err := Get(db, "PRAGMA data_version", nil, &version)
 	return version, err
 }
 

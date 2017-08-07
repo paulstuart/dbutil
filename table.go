@@ -3,7 +3,6 @@ package dbutil
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 )
@@ -28,7 +27,7 @@ func underlines(cols []interface{}) []interface{} {
 // Tabular returns a Writer and a RowFunc for using with Stream()
 func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 	if nil == w {
-		w = os.Stdout
+		w = testout
 	}
 
 	// tabwriter.NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer

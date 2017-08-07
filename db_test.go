@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
 	"sync"
@@ -26,7 +25,6 @@ const (
 
 var (
 	testFile = "test.db"
-	testout  = ioutil.Discard
 )
 
 func init() {
@@ -160,6 +158,20 @@ func TestStreamBadFunc(t *testing.T) {
 	}
 }
 
+func TestStreamMissingArgs(t *testing.T) {
+	db := structDb(t)
+
+	var name string
+	dest := []interface{}{&name}
+
+	//func stream(db *sql.DB, dest []interface{}, fn RowFunc, query string, args ...interface{}) error {
+	if err := stream(db, dest, nullStream, querySelect); err == nil {
+		t.Fatal("expected missing args error")
+	} else {
+		t.Log(err)
+	}
+}
+
 type Writer struct {
 	Prefix string
 }
@@ -187,28 +199,40 @@ func TestStreamTab(t *testing.T) {
 
 func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
-	out := (*twriter)(t)
-	err := StreamJSON(db, out, querySelect)
+	w := &Writer{"JSON:"}
+	err := StreamJSON(db, w, querySelect)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func numbChk(t *testing.T, s interface{}) {
-	t.Log(s, isNumber(s))
+type numChk struct {
+	item interface{}
+	good bool
 }
 
-func TestIsNumb(t *testing.T) {
-	numbChk(t, "10")
-	numbChk(t, "10x")
-	numbChk(t, "x10")
-	numbChk(t, "10.1")
-	numbChk(t, "10.1.2.3")
-	numbChk(t, "1way")
-	numbChk(t, "10 ")
-	numbChk(t, " 1 ")
+func TestIsNumber(t *testing.T) {
+	u := unknownStruct{}
+	nList := []numChk{
+		{1, true},
+		{"10", true},
+		{"10", true},
+		{"10abc", false},
+		{"0x123", true},
+		{"0xdeadbeef", true},
+		{"0xnotvalid", false},
+		{"x", false},
+		{"000000", false},
+		{u, false},
+	}
+	for _, n := range nList {
+		if (nil == isNumber(n.item)) != n.good {
+			t.Errorf("%v expected to be %t\n", n.item, n.good)
+		}
+	}
 }
 
+/*
 type twriter testing.T
 
 func NewTestlog(t *testing.T) *log.Logger {
@@ -221,6 +245,7 @@ func (w *twriter) Write(p []byte) (int, error) {
 	t.Logf("%s\n", string(p))
 	return len(p), nil
 }
+*/
 
 func prepare(db *sql.DB) {
 	const query = "insert into structs(name, kind, data) values(?,?,?)"
@@ -230,13 +255,6 @@ func prepare(db *sql.DB) {
 	Exec(db, query, "def", 69, "m'kay")
 	Exec(db, query, "hij", 42, "meaning of life")
 	Exec(db, query, "klm", 2, "of a kind")
-}
-
-func TestIsNumberInvalid(t *testing.T) {
-	if n := isNumber(nil); n {
-		t.Errorf("expected to not be numeric")
-	}
-
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
@@ -315,7 +333,6 @@ func BenchmarkQueryPrepared(b *testing.B) {
 }
 
 func nullStream(columns []string, count int, buffer []interface{}) error {
-	fmt.Fprintln(ioutil.Discard, buffer...)
 	return nil
 }
 
@@ -472,6 +489,27 @@ func TestServerRead(t *testing.T) {
 	butter(t, r, 2, 10)
 	close(r)
 	close(e)
+	Close(db)
+}
+
+func TestServerBadQuery(t *testing.T) {
+	db := fakeHammer(t, 10, 1000)
+	r := make(chan Query, 4096)
+	go Server(db, r, nil)
+	ec := make(chan error)
+	r <- Query{
+		Query: queryBad,
+		Args:  nil,
+		Reply: nullStream,
+		Error: ec,
+	}
+	close(r)
+	err := <-ec
+	if err == nil {
+		t.Fatal("expected missing args error")
+	} else {
+		t.Log(err)
+	}
 	Close(db)
 }
 
@@ -714,24 +752,24 @@ func slam(t *testing.T, inserter *Inserter, workers, count int) {
 	t.Logf("last: %d\n", i)
 }
 
-func TestGetResults(t *testing.T) {
+func TestGet(t *testing.T) {
 	db := structDb(t)
 	var name string
 	var kind int64
 	query := "select name, kind from structs limit 1"
-	if _, err := GetResults(db, query, nil, &name, &kind); err != nil {
+	if _, err := Get(db, query, nil, &name, &kind); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("kind = %d, name = %s\n", kind, name)
 }
 
-func TestGetResultsEmpty(t *testing.T) {
+func TestGetEmpty(t *testing.T) {
 	db := structDb(t)
 
 	var name string
 	var kind int64
 	query := "select name, kind from structs where name='this name does not exist'"
-	if _, err := GetResults(db, query, nil, &name, &kind); err != nil {
+	if _, err := Get(db, query, nil, &name, &kind); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("kind = %d, name = %s\n", kind, name)
@@ -843,7 +881,7 @@ func TestRowBadQuery(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
 	args := []interface{}{"abc", 23}
-	_, _, err := Row(db, queryBad, args...)
+	_, _, err := Row(db, nil, queryBad, args...)
 	if err == nil {
 		t.Error("expected query error")
 	}
@@ -854,7 +892,7 @@ func TestRowNoResults(t *testing.T) {
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"NOT MATCHING", 19182191212}
-	_, row, err := Row(db, query, args...)
+	_, row, err := Row(db, nil, query, args...)
 	if err != nil {
 		t.Error(err)
 	}
@@ -896,6 +934,7 @@ func TestInsert(t *testing.T) {
 	}
 }
 
+/*
 func TestGenerator(t *testing.T) {
 	db := structDb(t)
 
@@ -913,6 +952,7 @@ func TestGenerator(t *testing.T) {
 		t.Fatalf("invalid id: %d\n", id)
 	}
 }
+*/
 
 func TestInsertMany(t *testing.T) {
 	db := structDb(t)
@@ -932,7 +972,7 @@ func TestInsertMany(t *testing.T) {
 	query2 := "select count(*) as count from structs where kind=?"
 	args2 := []interface{}{kind}
 	var count int
-	if _, err := GetResults(db, query2, args2, &count); err != nil {
+	if _, err := Get(db, query2, args2, &count); err != nil {
 		t.Fatal(err)
 	}
 	if count != len(args) {
@@ -992,7 +1032,7 @@ func TestQueryClosed(t *testing.T) {
 	db.Close()
 	query := "select count(*) as count from structs"
 	var count int
-	if _, err = GetResults(db, query, nil, &count); err == nil {
+	if _, err = Get(db, query, nil, &count); err == nil {
 		t.Fatal("expected query error")
 	}
 	t.Logf("got expected error: %v\n", err)
@@ -1015,4 +1055,46 @@ func memDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestScanRow(t *testing.T) {
+	db := structDb(t)
+	kind := 23
+	args := []interface{}{"many1", kind}
+	q := querySelect + " limit 1"
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows.Next() {
+		t.Fatal("no row found")
+	}
+	cols, _ := Columns(rows)
+	if _, err := scanRow(rows, nil, cols...); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Log(err)
+	}
+}
+
+func TestScanRowMissingDest(t *testing.T) {
+	db := structDb(t)
+	kind := 23
+	args := []interface{}{"many1", kind}
+	q := querySelect + " limit 1"
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows.Next() {
+		t.Fatal("no row found")
+	}
+	cols, _ := Columns(rows)
+	var name string
+	dest := []interface{}{&name}
+	if _, err := scanRow(rows, dest, cols...); err == nil {
+		t.Fatal("expected missing args error")
+	} else {
+		t.Log(err)
+	}
 }

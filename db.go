@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 var (
 	mu sync.Mutex
 
+	digits  = regexp.MustCompile("^[0-9]+$")
 	numeric = regexp.MustCompile("^[0-9]+(\\.[0-9])?$")
 	repl    = strings.NewReplacer(
 		"\n", "\\\\n",
@@ -27,6 +29,7 @@ var (
 		"_", " ",
 		"-", " ",
 	)
+	testout = ioutil.Discard
 )
 
 const (
@@ -92,31 +95,22 @@ func StringInterface(arr []string) []interface{} {
 */
 
 // Row returns one row of the results of a query
-func Row(db *sql.DB, query string, args ...interface{}) ([]string, []interface{}, error) {
+func Row(db *sql.DB, dest []interface{}, query string, args ...interface{}) ([]string, []interface{}, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
 	cols, _ := Columns(rows)
-	buff := make([]interface{}, len(cols))
-	dest := make([]interface{}, len(cols))
 	if !rows.Next() {
 		return cols, nil, nil
 	}
-	for i := range cols {
-		dest[i] = &(buff[i])
-	}
-	if err := rows.Scan(dest...); err != nil {
-		return cols, nil, err
-	}
-
+	buff, err := scanRow(rows, dest, cols...)
 	return cols, buff, err
 }
 
 // RowStrings returns the row results all as strings
 func RowStrings(db *sql.DB, query string, args ...interface{}) ([]string, error) {
-	_, row, err := Row(db, query, args...)
+	_, row, err := Row(db, nil, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +243,28 @@ func Columns(row *sql.Rows) ([]string, error) {
 	return columns, nil
 }
 
+func scanRow(rows *sql.Rows, dest []interface{}, columns ...string) ([]interface{}, error) {
+	var buffer []interface{}
+	if dest == nil {
+		buffer = make([]interface{}, len(columns))
+		dest = make([]interface{}, len(columns))
+		for k := 0; k < len(buffer); k++ {
+			dest[k] = &buffer[k]
+		}
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return nil, errors.Wrapf(err, "bad scan: %v", rows)
+	}
+	return buffer, nil
+}
+
 // Stream streams the query results to function fn
 func Stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
+	return stream(db, nil, fn, query, args...)
+}
+
+// stream streams the query results to function fn
+func stream(db *sql.DB, dest []interface{}, fn RowFunc, query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
@@ -264,13 +278,9 @@ func Stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 
 	i := 0
 	for rows.Next() {
-		buffer := make([]interface{}, len(columns))
-		dest := make([]interface{}, len(columns))
-		for k := 0; k < len(buffer); k++ {
-			dest[k] = &buffer[k]
-		}
-		if err = rows.Scan(dest...); err != nil {
-			return errors.Wrapf(err, "bad scan: %v", rows)
+		buffer, err := scanRow(rows, dest, columns...)
+		if err != nil {
+			return err
 		}
 		if err := fn(columns, i, buffer); err != nil {
 			return err
@@ -312,18 +322,29 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 	return Stream(db, fn, query, args...)
 }
 
-func isNumber(d interface{}) bool {
+func isNumber(d interface{}) error {
 	switch d := d.(type) {
 	case int, int32, int64, float32, float64:
-		return true
+		return nil
 	case string:
 		// multiple leading zeros is likely a string
 		if strings.HasPrefix(d, "00") {
-			return false
+			return fmt.Errorf("00 prefix indicates string")
 		}
-		return numeric.Match([]byte(strings.TrimSpace(d)))
+		if strings.HasPrefix(d, "0x") {
+			var i int
+			r := strings.NewReader(d)
+			if _, err := fmt.Fscanf(r, "0x%x", &i); err != nil {
+				return errors.Wrap(err, "hex err")
+			}
+			return nil
+		}
+		if numeric.Match([]byte(strings.TrimSpace(d))) {
+			return nil
+		}
+		return fmt.Errorf("not a numeric match")
 	default:
-		return false
+		return fmt.Errorf("unknown type: %v", d)
 	}
 }
 
@@ -376,6 +397,7 @@ func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
 // Iterator returns query results
 type Iterator func() (values []interface{}, ok bool)
 
+/*
 // Generator returns an iterator for a query
 func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
 	c := make(chan []interface{})
@@ -396,6 +418,7 @@ func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interfac
 
 	return iter
 }
+*/
 
 // Server provides serialized access to the database
 //func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
@@ -429,47 +452,26 @@ func Server(db *sql.DB, r chan Query, w chan Action) {
 	wg.Wait()
 }
 
-// GetResults writes to the record slice
-func GetResults(db *sql.DB, query string, args []interface{}, record ...interface{}) ([]string, error) {
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	if !rows.Next() {
-		return nil, nil
-	}
-	cols, _ := Columns(rows)
-	return cols, rows.Scan(record...)
+// Get writes to the record slice
+func Get(db *sql.DB, query string, args []interface{}, dest ...interface{}) ([]string, error) {
+	cols, _, err := Row(db, dest, query, args...)
+	return cols, err
 }
 
 // MapRow returns the results of a query as a map
 func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
-	rows, err := db.Query(query, args...)
+	cols, buff, err := Row(db, nil, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	if !rows.Next() {
-		return nil, nil
-	}
-
-	cols, _ := Columns(rows)
-	buff := make([]interface{}, len(cols))
-	dest := make([]interface{}, len(cols))
-	for i := range buff {
-		dest[i] = &buff[i]
-	}
-
-	if err := rows.Scan(dest...); err != nil {
-		return nil, err
-	}
-
 	reply := make(map[string]interface{})
-	for i, col := range cols {
-		reply[col] = buff[i]
+	if len(buff) > 0 {
+		for i, col := range cols {
+			reply[col] = buff[i]
+		}
 	}
 
-	rows.Close()
-	return reply, err
+	return reply, nil
 }
 
 // Close cleans up the database before closing
