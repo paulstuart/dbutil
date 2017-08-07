@@ -458,8 +458,8 @@ func Get(db *sql.DB, query string, args []interface{}, dest ...interface{}) ([]s
 	return cols, err
 }
 
-// MapRow returns the results of a query as a map
-func MapRow(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
+// RowMap returns the results of a query as a map
+func RowMap(db *sql.DB, query string, args ...interface{}) (map[string]interface{}, error) {
 	cols, buff, err := Row(db, nil, query, args...)
 	if err != nil {
 		return nil, err

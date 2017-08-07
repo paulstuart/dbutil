@@ -775,12 +775,12 @@ func TestGetEmpty(t *testing.T) {
 	t.Logf("kind = %d, name = %s\n", kind, name)
 }
 
-func TestMapRow(t *testing.T) {
+func TestRowMap(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"abc", 23}
-	row, err := MapRow(db, query, args...)
+	row, err := RowMap(db, query, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -794,21 +794,21 @@ func TestMapRow(t *testing.T) {
 
 }
 
-func TestMapRowBadQuery(t *testing.T) {
+func TestRowMapBadQuery(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
-	_, err := MapRow(db, queryBad)
+	_, err := RowMap(db, queryBad)
 	if err == nil {
 		t.Fatal("expected query error")
 	}
 }
 
-func TestMapRowEmpty(t *testing.T) {
+func TestRowMapEmpty(t *testing.T) {
 	db := structDb(t)
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"this does not exist", 666}
-	_, err := MapRow(db, query, args...)
+	_, err := RowMap(db, query, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
