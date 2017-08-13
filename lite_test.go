@@ -12,14 +12,15 @@ const (
 )
 
 func TestFuncs(t *testing.T) {
-	sqlInit("funky", "", IPFuncs...)
+	sqlInit("funky", "", ipFuncs...)
 	db, err := sql.Open("funky", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	const create = `create table if not exists iptest ( ip int )`
+	//const create = `create table if not exists iptest ( ip int )`
+	const create = `create table iptest ( ip int )`
 	const ins = `
 insert into iptest values(atoip('127.0.0.1'));
 insert into iptest values(atoip('192.168.1.1'));
@@ -35,16 +36,22 @@ insert into iptest values(atoip('192.168.1.1'));
 	const testIP = "192.168.1.1"
 	var ipv4 string
 	args := []interface{}{testIP}
+
 	if _, err := Get(db, "select iptoa(ip) as ipv4 from iptest where ipv4 = ?", args, &ipv4); err != nil {
 		t.Fatal(err)
 	}
+
 	if ipv4 != testIP {
 		t.Errorf("expected: %s but got: %s\n", testIP, ipv4)
 	}
-	if _, err := Get(db, "select atoip('192.168.1') as ipv4 from iptest limit 1", nil, &ipv4); err == nil {
-		t.Fatal("expected ip error")
+
+	var ip32 int32
+	if _, err := Get(db, "select atoip('8.8.8') as ipv4", nil, &ip32); err != nil {
+		t.Fatal(err)
 	} else {
-		t.Log(err)
+		if ip32 != -1 {
+			t.Fatalf("expected: %d but got: %d\n", -1, ip32)
+		}
 	}
 }
 
@@ -225,5 +232,42 @@ func TestOpenSqliteWithHookBadDatabase(t *testing.T) {
 		t.Fatal("expected error for invalid database")
 	} else {
 		t.Log(err)
+	}
+}
+
+func TestCommandsBadQuery(t *testing.T) {
+	db := memDB(t)
+	if err := Commands(db, queryBad, false, nil); err == nil {
+		t.Fatal("expected error for bad query")
+	} else {
+		t.Log(err)
+	}
+}
+
+func TestCommandsReadMissingFile(t *testing.T) {
+	db := memDB(t)
+	cmd := `.read /this/file/does/not/exist.sql`
+	if err := Commands(db, cmd, false, nil); err == nil {
+		t.Fatal("expected error for reading command file")
+	} else {
+		t.Log(err)
+	}
+}
+func TestCommandsTrigger(t *testing.T) {
+	db := structDb(t)
+	const (
+		query1 = `create table if not exists inserted (id integer, msg text)`
+		query2 = `
+CREATE TRIGGER structs_insert AFTER INSERT ON structs 
+BEGIN
+    insert or replace into inserted (id) values(NEW.id);
+    insert or replace into inserted (msg) values('ack!');
+END;`
+	)
+	if _, _, err := Exec(db, query1); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commands(db, query2, false, nil); err != nil {
+		t.Fatal(err)
 	}
 }

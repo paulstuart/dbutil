@@ -1,6 +1,7 @@
 package dbutil
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"strings"
@@ -63,4 +64,13 @@ func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 		rower(values...)
 		return nil
 	}
+}
+
+func PrintTable(db *sql.DB, w io.Writer, header bool, query string, args ...interface{}) error {
+	tw, table := Tabular(w, true)
+	if err := NewStreamer(db).Stream(table, query, args...); err != nil {
+		return err
+	}
+	tw.Flush()
+	return nil
 }

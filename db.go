@@ -84,16 +84,6 @@ func toString(in []interface{}) ([]string, error) {
 	return out, nil
 }
 
-/*
-func StringInterface(arr []string) []interface{} {
-	resp := make([]interface{}, 0, len(arr))
-	for i := range arr {
-		resp = append(resp, &arr[i])
-	}
-	return resp
-}
-*/
-
 // Row returns one row of the results of a query
 func Row(db *sql.DB, dest []interface{}, query string, args ...interface{}) ([]string, []interface{}, error) {
 	rows, err := db.Query(query, args...)
@@ -258,9 +248,17 @@ func scanRow(rows *sql.Rows, dest []interface{}, columns ...string) ([]interface
 	return buffer, nil
 }
 
+type Streamer struct {
+	db *sql.DB
+}
+
+func NewStreamer(db *sql.DB) *Streamer {
+	return &Streamer{db}
+}
+
 // Stream streams the query results to function fn
-func Stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
-	return stream(db, nil, fn, query, args...)
+func (s *Streamer) Stream(fn RowFunc, query string, args ...interface{}) error {
+	return stream(s.db, nil, fn, query, args...)
 }
 
 // stream streams the query results to function fn
@@ -290,8 +288,8 @@ func stream(db *sql.DB, dest []interface{}, fn RowFunc, query string, args ...in
 	return err
 }
 
-// StreamCSV streams the query results as a comma separated file
-func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+// CSV streams the query results as a comma separated file
+func (s *Streamer) CSV(w io.Writer, query string, args ...interface{}) error {
 	cw := csv.NewWriter(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
@@ -304,11 +302,11 @@ func StreamCSV(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		return err
 	}
 	defer cw.Flush()
-	return Stream(db, fn, query, args...)
+	return s.Stream(fn, query, args...)
 }
 
-// StreamTab streams the query results as a tab separated file
-func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+// Tab streams the query results as a tab separated file
+func (s *Streamer) Tab(w io.Writer, query string, args ...interface{}) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
@@ -319,7 +317,7 @@ func StreamTab(db *sql.DB, w io.Writer, query string, args ...interface{}) error
 		}
 		return err
 	}
-	return Stream(db, fn, query, args...)
+	return s.Stream(fn, query, args...)
 }
 
 func isNumber(d interface{}) error {
@@ -348,8 +346,8 @@ func isNumber(d interface{}) error {
 	}
 }
 
-// StreamJSON streams the query results as JSON to the writer
-func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) error {
+// JSON streams the query results as JSON to the writer
+func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count > 0 {
 			fmt.Fprintln(w, ",")
@@ -381,7 +379,7 @@ func StreamJSON(db *sql.DB, w io.Writer, query string, args ...interface{}) erro
 	}
 	fmt.Fprintln(w, "[")
 	defer fmt.Fprintln(w, "\n]")
-	return Stream(db, fn, query, args...)
+	return s.Stream(fn, query, args...)
 }
 
 // Open returns a db struct for the given file
@@ -427,7 +425,7 @@ func Server(db *sql.DB, r chan Query, w chan Action) {
 	wg.Add(1)
 	go func() {
 		for q := range r {
-			err := Stream(db, q.Reply, q.Query, q.Args...)
+			err := stream(db, nil, q.Reply, q.Query, q.Args...)
 
 			if q.Error != nil {
 				// use goroutine so we don't block on sending errors

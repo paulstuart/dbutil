@@ -98,7 +98,7 @@ func registered(file string) *sqlite3.SQLiteConn {
 }
 
 func toIPv4(ip int64) string {
-	a := ip >> 24
+	a := (ip >> 24) & 0xFF
 	b := (ip >> 16) & 0xFF
 	c := (ip >> 8) & 0xFF
 	d := ip & 0xFF
@@ -109,7 +109,6 @@ func toIPv4(ip int64) string {
 func fromIPv4(ip string) int64 {
 	octets := strings.Split(ip, ".")
 	if len(octets) != 4 {
-		panic("nopes")
 		return -1
 	}
 	a, _ := strconv.ParseInt(octets[0], 10, 64)
@@ -126,8 +125,8 @@ type SqliteFuncReg struct {
 	Pure bool
 }
 
-// IPFuncs are functions to convert ipv4 to and from int32
-var IPFuncs = []SqliteFuncReg{
+// ipFuncs are functions to convert ipv4 to and from int32
+var ipFuncs = []SqliteFuncReg{
 	{"iptoa", toIPv4, true},
 	{"atoip", fromIPv4, true},
 }
@@ -358,16 +357,18 @@ func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) 
 	cnt := 0
 	for {
 		buffer := make([]driver.Value, len(cols))
-		if err := rows.Next(buffer); err != nil {
+		if err = rows.Next(buffer); err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			break
 		}
-		fn(cols, cnt, buffer)
+		if err = fn(cols, cnt, buffer); err != nil {
+			break
+		}
 		cnt++
 	}
-	return nil
+	return err
 }
 
 // DataVersion returns the version number of the schema
