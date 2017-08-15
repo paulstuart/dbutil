@@ -13,6 +13,7 @@ import (
 
 const (
 	querySelect = "select id,name,kind,modified from structs"
+	querySingle = "select id,name,kind,modified from structs limit 1"
 	queryBad    = "c e n'est pas une sql query"
 	queryCreate = `create table if not exists structs (
     id integer not null primary key,
@@ -250,7 +251,9 @@ func (w *twriter) Write(p []byte) (int, error) {
 func prepare(db *sql.DB) {
 	const query = "insert into structs(name, kind, data) values(?,?,?)"
 
-	Exec(db, queryCreate)
+	if _, _, err := Exec(db, queryCreate); err != nil {
+		panic(err)
+	}
 	Exec(db, query, "abc", 23, "what ev er")
 	Exec(db, query, "def", 69, "m'kay")
 	Exec(db, query, "hij", 42, "meaning of life")
@@ -274,6 +277,55 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 			if err != nil {
 				b.Error(err)
 				break
+			}
+			rows.Close()
+		}
+	}
+
+	b.ResetTimer()
+	b.Run("adhoc", queryAdHoc)
+	b.StopTimer()
+	if err := db.Close(); err != nil {
+		b.Error(err)
+	}
+}
+
+func BenchmarkQueryAdHocOut(b *testing.B) {
+	db, err := Open(testFile, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepare(db)
+	w := ioutil.Discard
+	delimiter := "\t"
+	query := "select id,name,kind,modified from structs where id > 0"
+	queryAdHoc := func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			rows, err := db.Query(query)
+			if err != nil {
+				b.Error(err)
+				break
+			}
+			columns, _ := rows.Columns()
+			buffer := make([]interface{}, len(columns))
+			dest := make([]interface{}, len(columns))
+			for k := 0; k < len(buffer); k++ {
+				dest[k] = &buffer[k]
+			}
+
+			if !rows.Next() {
+				b.Fatal("no rows found")
+			}
+			if err := rows.Scan(dest...); err != nil {
+				b.Fatal(err)
+			}
+			for i, col := range buffer {
+				fmt.Fprintf(w, "%v", col)
+				if i < len(buffer)-1 {
+					fmt.Fprint(w, delimiter)
+				} else {
+					fmt.Fprintln(w)
+				}
 			}
 			rows.Close()
 		}
@@ -333,6 +385,15 @@ func BenchmarkQueryPrepared(b *testing.B) {
 }
 
 func nullStream(columns []string, count int, buffer []interface{}) error {
+	f := ioutil.Discard
+	tabs := len(buffer) - 1
+	for i, item := range buffer {
+		fmt.Fprint(f, item)
+		if i < tabs {
+			fmt.Fprint(f, "\t")
+		}
+	}
+	fmt.Fprint(f, "\n")
 	return nil
 }
 
@@ -344,8 +405,10 @@ func BenchmarkStream(b *testing.B) {
 	prepare(dbs)
 
 	b.ResetTimer()
-	if err := stream(dbs, nil, nullStream, querySelect); err != nil {
-		b.Error(err)
+	for n := 0; n < b.N; n++ {
+		if err := stream(dbs, nil, nullStream, querySingle); err != nil {
+			b.Error(err)
+		}
 	}
 }
 
@@ -372,8 +435,10 @@ func BenchmarkStreamToFile(b *testing.B) {
 	prepare(dbs)
 
 	b.ResetTimer()
-	if err := stream(dbs, nil, fStream, querySelect); err != nil {
-		b.Fatal(err)
+	for n := 0; n < b.N; n++ {
+		if err := stream(dbs, nil, fStream, querySingle); err != nil {
+			b.Fatal(err)
+		}
 	}
 	f.Close()
 }
@@ -386,8 +451,105 @@ func BenchmarkStreamJSON(b *testing.B) {
 	prepare(db)
 
 	b.ResetTimer()
-	if err := NewStreamer(db).JSON(testout, querySelect); err != nil {
-		b.Error(err)
+	for n := 0; n < b.N; n++ {
+		if err := NewStreamer(db).JSON(testout, querySingle); err != nil {
+			b.Error(err)
+		}
+	}
+}
+
+func BenchmarkStreamWriteRow(b *testing.B) {
+	db, err := Open("stest.db", true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepare(db)
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		if err := WriteRow(db, testout, "\t", false, querySingle); err != nil {
+			b.Error(err)
+		}
+	}
+}
+
+func BenchmarkInsertSingle(b *testing.B) {
+	db, err := Open(":memory:", true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepare(db)
+	query := "insert into structs (name,kind) values('ziggy',1984)"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Insert(db, query); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if err := db.Close(); err != nil {
+		b.Fatal(err)
+	}
+}
+
+func BenchmarkInsertTransactionNoArgs(b *testing.B) {
+	db, err := Open(":memory:", true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepare(db)
+	query := "insert into structs (name,kind) values('ziggy',1984)"
+	b.ResetTimer()
+	tx, err := db.Begin()
+	if err != nil {
+		b.Fatal(err)
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		b.Fatal(err)
+	}
+	for i := 0; i < b.N; i++ {
+		if _, err := stmt.Exec(); err != nil {
+			b.Fatal(err)
+		}
+	}
+	tx.Commit()
+	stmt.Close()
+	b.StopTimer()
+	if err := db.Close(); err != nil {
+		b.Fatal(err)
+	}
+}
+
+func BenchmarkInsertTransactionWithArgs(b *testing.B) {
+	db, err := Open(":memory:", true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prepare(db)
+	query := "insert into structs (name,kind) values(?,?)"
+	b.ResetTimer()
+	tx, err := db.Begin()
+	if err != nil {
+		b.Fatal(err)
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		b.Fatal(err)
+	}
+	for i := 0; i < b.N; i++ {
+		if _, err := stmt.Exec("ziggy", 1984); err != nil {
+			b.Fatal(err)
+		}
+	}
+	tx.Commit()
+	stmt.Close()
+	b.StopTimer()
+	if err := db.Close(); err != nil {
+		b.Fatal(err)
 	}
 }
 
@@ -406,7 +568,7 @@ PRAGMA cache_size= 10485760;
 
 PRAGMA journal_mode = WAL;
 
-PRAGMA synchronous = 1;
+PRAGMA synchronous = FULL;
 
 `
 	hammerInsert = `insert into hammer (worker, counter) values (?,?)`

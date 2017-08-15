@@ -477,3 +477,47 @@ func Close(db *sql.DB) {
 	Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)")
 	db.Close()
 }
+
+// WriteRow writes each row directly to the writer, using the given field delimiter
+func WriteRow(db *sql.DB, w io.Writer, delimiter string, header bool, query string, args ...interface{}) error {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	columns, err := Columns(rows)
+	if err != nil {
+		return err
+	}
+
+	buffer := make([]interface{}, len(columns))
+	dest := make([]interface{}, len(columns))
+	for k := 0; k < len(buffer); k++ {
+		dest[k] = &buffer[k]
+	}
+	if header {
+		for i, col := range columns {
+			fmt.Fprint(w, col)
+			if i < len(columns)-1 {
+				fmt.Fprint(w, delimiter)
+			} else {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return errors.Wrapf(err, "bad scan: %v", rows)
+		}
+		for i, col := range buffer {
+			fmt.Fprintf(w, "%v", col)
+			if i < len(buffer)-1 {
+				fmt.Fprint(w, delimiter)
+			} else {
+				fmt.Fprintln(w)
+			}
+		}
+	}
+	return nil
+}
