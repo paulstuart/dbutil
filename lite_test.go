@@ -103,7 +103,7 @@ func TestSqliteFuncsBad(t *testing.T) {
 
 func TestSqliteBadPath(t *testing.T) {
 	sqlInit(DriverName, "")
-	_, err := Open(badPath, true)
+	_, err := Open(badPath)
 	if err == nil {
 		t.Fatal("expected error for bad path")
 	} else {
@@ -113,7 +113,7 @@ func TestSqliteBadPath(t *testing.T) {
 
 func TestSqliteBadURI(t *testing.T) {
 	sqlInit(DriverName, "")
-	_, err := Open("test.db ! % # mode ro bad=", true)
+	_, err := Open("test.db ! % # mode ro bad=")
 	if err == nil {
 		t.Fatal("expected error for bad uri")
 	} else {
@@ -131,7 +131,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestBackup(t *testing.T) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestBackup(t *testing.T) {
 }
 
 func TestBackupBadDir(t *testing.T) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,30 +209,6 @@ func TestFileBadExec(t *testing.T) {
 func TestPragmas(t *testing.T) {
 	db := memDB(t)
 	Pragmas(db, testout)
-}
-
-func TestOpenSqliteWithHookNoName(t *testing.T) {
-	if _, err := OpenSqliteWithHook(":memory:", "", "", true); err != nil {
-		t.Fatal(err)
-	} else {
-		t.Log(err)
-	}
-}
-
-func TestOpenSqliteWithHookBadPath(t *testing.T) {
-	if _, err := OpenSqliteWithHook(badPath, "", "", false); err == nil {
-		t.Fatal("expected error for missing file")
-	} else {
-		t.Log(err)
-	}
-}
-
-func TestOpenSqliteWithHookBadDatabase(t *testing.T) {
-	if _, err := OpenSqliteWithHook("lite_test.go", "", "", false); err == nil {
-		t.Fatal("expected error for invalid database")
-	} else {
-		t.Log(err)
-	}
 }
 
 func TestCommandsBadQuery(t *testing.T) {

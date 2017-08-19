@@ -170,41 +170,6 @@ func sqlInit(name, hook string, funcs ...SqliteFuncReg) {
 	sql.Register(name, drvr)
 }
 
-// OpenSqlite returns a database
-func OpenSqlite(file, name string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
-	return OpenSqliteWithHook(file, name, "", init, funcs...)
-}
-
-// OpenSqliteWithHook returns a database with a connection hok
-// struct members are tagged as such, `sql:"id" key:"true" table:"servers"`
-//  where key and table are used for a single entry
-func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncReg) (*sql.DB, error) {
-	if len(name) == 0 {
-		name = DriverName
-	}
-	sqlInit(name, hook, funcs...)
-	if strings.Index(file, ":memory:") < 0 {
-		full, err := url.Parse(file)
-		if err != nil {
-			return nil, errors.Wrapf(err, "parse file: %s", file)
-		}
-		filename := full.Path
-		os.Mkdir(path.Dir(filename), 0777)
-		if init {
-			if _, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
-				return nil, errors.Wrapf(err, "os file: %s", file)
-			}
-		} else if _, err := os.Stat(filename); os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	db, err := sql.Open(name, file)
-	if err != nil {
-		return db, errors.Wrapf(err, "sql file: %s", file)
-	}
-	return db, db.Ping()
-}
-
 // Filename returns the filename of the DB
 func Filename(db *sql.DB) string {
 	var seq, name, file string
@@ -237,7 +202,7 @@ func Backup(db *sql.DB, dest string) error {
 func backup(db *sql.DB, dest string, step int, w io.Writer) error {
 	os.Remove(dest)
 
-	destDb, err := OpenSqlite(dest, DriverName, true)
+	destDb, err := Open(dest)
 	if err != nil {
 		return err
 	}
@@ -409,4 +374,66 @@ func DataVersion(db *sql.DB) (int64, error) {
 // libVersion string, libVersionNumber int, sourceID string) {
 func Version() (string, int, string) {
 	return sqlite3.Version()
+}
+
+type SqlConfig struct {
+	FailIfMissing bool
+	Hook          string
+	Driver        string
+	Funcs         []SqliteFuncReg
+}
+
+type ConfigFunc func(*SqlConfig)
+
+func ConfigDriverName(name string) ConfigFunc {
+	return func(c *SqlConfig) {
+		c.Driver = name
+	}
+}
+
+func ConfigFailIfMissing(fail bool) ConfigFunc {
+	return func(c *SqlConfig) {
+		c.FailIfMissing = fail
+	}
+}
+
+func ConfigHook(hook string) ConfigFunc {
+	return func(c *SqlConfig) {
+		c.Hook = hook
+	}
+}
+
+func ConfigFuncs(funcs ...SqliteFuncReg) ConfigFunc {
+	return func(c *SqlConfig) {
+		c.Funcs = funcs
+	}
+}
+
+// Open returns a db struct for the given file
+func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
+	config := &SqlConfig{Driver: DriverName}
+	for _, opt := range opts {
+		opt(config)
+	}
+	sqlInit(config.Driver, config.Hook, config.Funcs...)
+	if strings.Index(file, ":memory:") < 0 {
+		full, err := url.Parse(file)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parse file: %s", file)
+		}
+		filename := full.Path
+		os.Mkdir(path.Dir(filename), 0777)
+		if !config.FailIfMissing {
+			if _, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
+				return nil, errors.Wrapf(err, "os file: %s", file)
+			}
+		} else if _, err := os.Stat(filename); os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	db, err := sql.Open(config.Driver, file)
+	if err != nil {
+		return db, errors.Wrapf(err, "sql file: %s", file)
+	}
+	return db, db.Ping()
 }

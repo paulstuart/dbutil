@@ -382,16 +382,6 @@ func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
 	return s.Stream(fn, query, args...)
 }
 
-// Open returns a db struct for the given file
-func Open(file string, init bool) (*sql.DB, error) {
-	return OpenWithHook(file, "", init)
-}
-
-// OpenWithHook ultimately should be multi db aware
-func OpenWithHook(file, hook string, init bool) (*sql.DB, error) {
-	return OpenSqliteWithHook(file, DriverName, hook, init)
-}
-
 // Iterator returns query results
 type Iterator func() (values []interface{}, ok bool)
 

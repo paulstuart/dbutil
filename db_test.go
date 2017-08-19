@@ -38,7 +38,7 @@ func init() {
 /*
 func TestSqliteFilename(t *testing.T) {
 	sqlInit(DriverName, "")
-	db, err := Open(":memory:", true)
+	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestSqliteFilename(t *testing.T) {
 */
 
 func TestSqliteCreate(t *testing.T) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSqliteCreate(t *testing.T) {
 }
 
 func TestSqliteDelete(t *testing.T) {
-	db, _ := Open(testFile, true)
+	db, _ := Open(testFile)
 	cnt, err := Update(db, "delete from foo where id=?", 13)
 	if err != nil {
 		t.Fatal("DELETE ERROR: ", err)
@@ -93,7 +93,7 @@ func TestSqliteDelete(t *testing.T) {
 }
 
 func TestSqliteInsert(t *testing.T) {
-	db, _ := Open(testFile, true)
+	db, _ := Open(testFile)
 	cnt, err := Update(db, "insert into foo (id,name) values(?,?)", 13, "bakers")
 	if err != nil {
 		t.Log("INSERT ERROR: ", err)
@@ -103,7 +103,7 @@ func TestSqliteInsert(t *testing.T) {
 }
 
 func TestSqliteUpdate(t *testing.T) {
-	db, _ := Open(testFile, true)
+	db, _ := Open(testFile)
 	cnt, err := Update(db, "update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
 		t.Log("UPDATE ERROR: ", err)
@@ -269,7 +269,7 @@ func prepare(db *sql.DB) {
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 }
 
 func BenchmarkQueryAdHocOut(b *testing.B) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -348,14 +348,14 @@ func BenchmarkQueryAdHocOut(b *testing.B) {
 }
 
 func TestMissingDB(t *testing.T) {
-	_, err := Open("this_path_does_not_exist", false)
+	_, err := Open("this_path_does_not_exist", ConfigFailIfMissing(true))
 	if err == nil {
 		t.Error("should have had error for missing file")
 	}
 }
 
 func BenchmarkQueryPrepared(b *testing.B) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func nullStream(columns []string, count int, buffer []interface{}) error {
 }
 
 func BenchmarkStream(b *testing.B) {
-	dbs, err := Open("stest.db", true)
+	dbs, err := Open("stest.db")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func BenchmarkStreamToFile(b *testing.B) {
 		fmt.Fprint(f, "\n")
 		return nil
 	}
-	dbs, err := Open("stest.db", true)
+	dbs, err := Open("stest.db")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func BenchmarkStreamToFile(b *testing.B) {
 }
 
 func BenchmarkStreamJSON(b *testing.B) {
-	db, err := Open("stest.db", true)
+	db, err := Open("stest.db")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func BenchmarkStreamJSON(b *testing.B) {
 }
 
 func BenchmarkStreamWriteRow(b *testing.B) {
-	db, err := Open("stest.db", true)
+	db, err := Open("stest.db")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func BenchmarkStreamWriteRow(b *testing.B) {
 }
 
 func BenchmarkInsertSingle(b *testing.B) {
-	db, err := Open("file::memory:?cache=shared", true)
+	db, err := Open("file::memory:?cache=shared")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionNoArgs(b *testing.B) {
-	db, err := Open("file::memory:?cache=shared", true)
+	db, err := Open("file::memory:?cache=shared")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -532,7 +532,7 @@ func BenchmarkInsertTransactionNoArgs(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionWithArgs(b *testing.B) {
-	db, err := Open("file::memory:?cache=shared", true)
+	db, err := Open("file::memory:?cache=shared")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func getHammerDB(t *testing.T, name string) *sql.DB {
 	if name == "" {
 		name = "hammer.db"
 	}
-	db, err := Open(name, true)
+	db, err := Open(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1217,7 +1217,7 @@ func TestInsertManyBadQuery(t *testing.T) {
 }
 
 func TestQueryClosed(t *testing.T) {
-	db, err := Open(testFile, true)
+	db, err := Open(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,7 +1242,7 @@ func fakeHammer(t *testing.T, workers, count int) *sql.DB {
 }
 
 func cachedDB(t *testing.T) *sql.DB {
-	db, err := Open("file::memory:?cache=shared", true)
+	db, err := Open("file::memory:?cache=shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1250,7 +1250,7 @@ func cachedDB(t *testing.T) *sql.DB {
 }
 
 func memDB(t *testing.T) *sql.DB {
-	db, err := Open(":memory:", true)
+	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1298,5 +1298,12 @@ func TestScanRowMissingDest(t *testing.T) {
 		t.Fatal("expected missing args error")
 	} else {
 		t.Log(err)
+	}
+}
+
+func TestWriteRow(t *testing.T) {
+	db := structDb(t)
+	if err := WriteRow(db, testout, ",", true, querySelect); err != nil {
+		t.Fatal(err)
 	}
 }
