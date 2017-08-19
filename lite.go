@@ -75,7 +75,7 @@ var (
 	pragmas    = strings.Fields(pragmaList)
 	commentC   = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	commentSQL = regexp.MustCompile(`\s*--.*`)
-	readline   = regexp.MustCompile(`(\.read \S+)`)
+	readline   = regexp.MustCompile(`(\.[a-z]+( .*)*)`)
 
 	registry    = make(map[string]*sqlite3.SQLiteConn)
 	initialized = make(map[string]struct{})
@@ -183,7 +183,7 @@ func OpenSqliteWithHook(file, name, hook string, init bool, funcs ...SqliteFuncR
 		name = DriverName
 	}
 	sqlInit(name, hook, funcs...)
-	if file != ":memory:" {
+	if strings.Index(file, ":memory:") < 0 {
 		full, err := url.Parse(file)
 		if err != nil {
 			return nil, errors.Wrapf(err, "parse file: %s", file)
@@ -289,6 +289,15 @@ func startsWith(data, sub string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(data)), strings.ToUpper(sub))
 }
 
+func listTables(db *sql.DB, w io.Writer) error {
+	q := `
+SELECT name FROM sqlite_master
+WHERE type='table'
+ORDER BY name
+`
+	return PrintTable(db, w, true, q)
+}
+
 // Commands emulates the client reading a series of commands
 // TODO: is this available in the C api?
 func Commands(db *sql.DB, buffer string, echo bool, w io.Writer) error {
@@ -299,18 +308,20 @@ func Commands(db *sql.DB, buffer string, echo bool, w io.Writer) error {
 	clean := commentC.ReplaceAll([]byte(buffer), []byte{})
 	clean = commentSQL.ReplaceAll(clean, []byte{})
 
-	// .read gets a fake ';' to split on
-	clean = readline.ReplaceAll(clean, []byte("${1};"))
+	// .read, et al gets a fake ';' to split on
+	//clean = readline.ReplaceAll(clean, []byte("${1};"))
 
-	lines := strings.Split(string(clean), ";")
+	//lines := strings.Split(string(clean), ";")
+	lines := strings.Split(string(clean), "\n")
 	multiline := "" // triggers are multiple lines
+	trigger := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if 0 == len(line) {
 			continue
 		}
 		if echo {
-			fmt.Println("LINE:", line)
+			fmt.Println("CMD>", line)
 		}
 		switch {
 		case strings.HasPrefix(line, ".echo "):
@@ -328,19 +339,35 @@ func Commands(db *sql.DB, buffer string, echo bool, w io.Writer) error {
 			str = strings.Trim(str, "'")
 			fmt.Println(str)
 			continue
+		case strings.HasPrefix(line, ".tables"):
+			if err := listTables(db, w); err != nil {
+				return errors.Wrapf(err, "table error")
+			}
+			continue
 		case startsWith(line, "CREATE TRIGGER"):
 			multiline = line
+			trigger = true
 			continue
-		case startsWith(line, "END"):
-			line = multiline + ";\n" + line
+		case startsWith(line, "END;"):
+			line = multiline + "\n" + line
 			multiline = ""
-		case len(multiline) > 0:
-			multiline += ";\n" + line // restore our 'split' transaction
+			trigger = false
+		case trigger:
+			multiline += "\n" + line // restore our 'split' transaction
 			continue
 		}
-		if _, err := db.Exec(line); err != nil {
+		if len(multiline) > 0 {
+			multiline += "\n" + line // restore our 'split' transaction
+		} else {
+			multiline = line
+		}
+		if strings.Index(line, ";") < 0 {
+			continue
+		}
+		if _, err := db.Exec(multiline); err != nil {
 			return errors.Wrapf(err, "EXEC QUERY: %s FILE: %s", line, Filename(db))
 		}
+		multiline = ""
 	}
 	return nil
 }

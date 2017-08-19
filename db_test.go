@@ -107,8 +107,9 @@ func TestSqliteUpdate(t *testing.T) {
 	cnt, err := Update(db, "update foo set id=23 where id > ? and name like ?", "3", "bi%")
 	if err != nil {
 		t.Log("UPDATE ERROR: ", err)
+	} else {
+		t.Log("UPDATED: ", cnt)
 	}
-	t.Log("UPDATED: ", cnt)
 	db.Close()
 }
 
@@ -120,6 +121,7 @@ func structDb(t *testing.T) *sql.DB {
 
 func TestStream(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	myStream := func(columns []string, count int, buffer []interface{}) error {
 		if len(columns) != 4 {
 			t.Fatal("no columns")
@@ -138,6 +140,7 @@ func TestStream(t *testing.T) {
 
 func TestStreamBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	myStream := func(columns []string, count int, buffer []interface{}) error {
 		if len(columns) == 0 {
 			t.Error("no columns")
@@ -151,6 +154,7 @@ func TestStreamBadQuery(t *testing.T) {
 
 func TestStreamBadFunc(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	myStream := func(columns []string, count int, buffer []interface{}) error {
 		return fmt.Errorf("bad func, no biscuit")
 	}
@@ -161,6 +165,7 @@ func TestStreamBadFunc(t *testing.T) {
 
 func TestStreamMissingArgs(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 
 	var name string
 	dest := []interface{}{&name}
@@ -183,6 +188,7 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 
 func TestStreamCSV(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	w := &Writer{"CSV:"}
 
 	if err := NewStreamer(db).CSV(w, querySelect); err != nil {
@@ -192,6 +198,7 @@ func TestStreamCSV(t *testing.T) {
 
 func TestStreamTab(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	w := &Writer{"TAB:"}
 	if err := NewStreamer(db).Tab(w, querySelect); err != nil {
 		t.Fatal(err)
@@ -200,6 +207,7 @@ func TestStreamTab(t *testing.T) {
 
 func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	w := &Writer{"JSON:"}
 	err := NewStreamer(db).JSON(w, querySelect)
 	if err != nil {
@@ -474,7 +482,7 @@ func BenchmarkStreamWriteRow(b *testing.B) {
 }
 
 func BenchmarkInsertSingle(b *testing.B) {
-	db, err := Open(":memory:", true)
+	db, err := Open("file::memory:?cache=shared", true)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -494,7 +502,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionNoArgs(b *testing.B) {
-	db, err := Open(":memory:", true)
+	db, err := Open("file::memory:?cache=shared", true)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -524,7 +532,7 @@ func BenchmarkInsertTransactionNoArgs(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionWithArgs(b *testing.B) {
-	db, err := Open(":memory:", true)
+	db, err := Open("file::memory:?cache=shared", true)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -564,6 +572,8 @@ create table hammer (
 	ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+.tables
+
 PRAGMA cache_size= 10485760;
 
 PRAGMA journal_mode = WAL;
@@ -575,7 +585,7 @@ PRAGMA synchronous = FULL;
 )
 
 func hammer(t *testing.T, workers, count int) {
-	db := hammerDB(t, "")
+	db := getHammerDB(t, "file::memory:?cache=shared")
 	hammerDb(t, db, workers, count)
 	Close(db)
 }
@@ -590,6 +600,10 @@ func hammerDb(t *testing.T, db *sql.DB, workers, count int) {
 			for cnt := range queue {
 				if _, err := db.Exec(hammerInsert, worker, cnt); err != nil {
 					t.Errorf("worker:%d count:%d, error:%s\n", worker, cnt, err.Error())
+					/*
+						} else {
+							t.Logf("worker:%d count:%d\n", worker, cnt)
+					*/
 				}
 			}
 			wg.Done()
@@ -603,10 +617,10 @@ func hammerDb(t *testing.T, db *sql.DB, workers, count int) {
 }
 
 func TestHammer(t *testing.T) {
-	hammer(t, 4, 10000)
+	hammer(t, 8, 10000)
 }
 
-func hammerDB(t *testing.T, name string) *sql.DB {
+func getHammerDB(t *testing.T, name string) *sql.DB {
 	if name == "" {
 		name = "hammer.db"
 	}
@@ -614,6 +628,7 @@ func hammerDB(t *testing.T, name string) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fmt.Fprintln(testout, "TESTOUT")
 	if err := Commands(db, hammerTime, false, testout); err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +646,7 @@ func errLogger(t *testing.T) chan error {
 }
 
 func TestServerWrite(t *testing.T) {
-	db := hammerDB(t, "")
+	db := getHammerDB(t, "")
 	r := make(chan Query, 4096)
 	w := make(chan Action, 4096)
 	e := errLogger(t)
@@ -828,7 +843,7 @@ func butter(t *testing.T, r chan Query, workers, count int) {
 }
 
 func TestInserterBadQuery(t *testing.T) {
-	db := hammerDB(t, "bulk.db")
+	db := getHammerDB(t, "bulk.db")
 
 	fn := func(err error) {
 		t.Log(err)
@@ -843,7 +858,7 @@ func TestInserterBadQuery(t *testing.T) {
 }
 
 func TestInserterClosed(t *testing.T) {
-	db := hammerDB(t, "bulk.db")
+	db := getHammerDB(t, "bulk.db")
 
 	fn := func(err error) {
 		t.Log(err)
@@ -858,7 +873,7 @@ func TestInserterClosed(t *testing.T) {
 }
 
 func TestInserterMissingArgs(t *testing.T) {
-	db := hammerDB(t, "bulk.db")
+	db := getHammerDB(t, "bulk.db")
 	defer Close(db)
 
 	fn := func(err error) {
@@ -876,7 +891,7 @@ func TestInserterMissingArgs(t *testing.T) {
 }
 
 func TestInserter(t *testing.T) {
-	db := hammerDB(t, "bulk.db")
+	db := getHammerDB(t, "bulk.db")
 	defer Close(db)
 
 	fn := func(err error) {
@@ -916,6 +931,7 @@ func slam(t *testing.T, inserter *Inserter, workers, count int) {
 
 func TestGet(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	var name string
 	var kind int64
 	query := "select name, kind from structs limit 1"
@@ -927,6 +943,7 @@ func TestGet(t *testing.T) {
 
 func TestGetEmpty(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 
 	var name string
 	var kind int64
@@ -939,6 +956,7 @@ func TestGetEmpty(t *testing.T) {
 
 func TestRowMap(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"abc", 23}
@@ -958,6 +976,7 @@ func TestRowMap(t *testing.T) {
 
 func TestRowMapBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	_, err := RowMap(db, queryBad)
 	if err == nil {
@@ -967,6 +986,7 @@ func TestRowMapBadQuery(t *testing.T) {
 
 func TestRowMapEmpty(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"this does not exist", 666}
@@ -978,6 +998,7 @@ func TestRowMapEmpty(t *testing.T) {
 
 func TestRowStrings(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"abc", 23}
@@ -995,6 +1016,7 @@ func TestRowStrings(t *testing.T) {
 
 func TestRowStringsBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	if _, err := RowStrings(db, queryBad); err == nil {
 		t.Fatalf("expected error for invalid query")
 	}
@@ -1041,6 +1063,7 @@ func TestToStringUnknownType(t *testing.T) {
 
 func TestRowBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	args := []interface{}{"abc", 23}
 	_, _, err := Row(db, nil, queryBad, args...)
@@ -1051,6 +1074,7 @@ func TestRowBadQuery(t *testing.T) {
 
 func TestRowNoResults(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
 	args := []interface{}{"NOT MATCHING", 19182191212}
@@ -1069,6 +1093,7 @@ func TestRowNoResults(t *testing.T) {
 
 func TestExecEmpty(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	_, _, err := Exec(db, "")
 	if err == nil {
 		t.Error("expected query error")
@@ -1077,6 +1102,7 @@ func TestExecEmpty(t *testing.T) {
 
 func TestExecBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	_, _, err := Exec(db, queryBad)
 	if err == nil {
 		t.Fatalf("expected error for invalid query")
@@ -1085,6 +1111,7 @@ func TestExecBadQuery(t *testing.T) {
 
 func TestInsert(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	query := "insert into structs(name, kind, data) values(?,?,?)"
 	args := []interface{}{"Blur", 13, "bugman"}
 	i, err := Insert(db, query, args...)
@@ -1118,6 +1145,7 @@ func TestGenerator(t *testing.T) {
 
 func TestInsertMany(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 
 	kind := 314159
 	query := "insert into structs(name, kind, data) values(?,?,?)"
@@ -1161,6 +1189,7 @@ func TestInsertManyClosedDb(t *testing.T) {
 
 func TestInsertManyMissingArgs(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 
 	kind := 314159
 	args := [][]interface{}{
@@ -1178,6 +1207,7 @@ func TestInsertManyMissingArgs(t *testing.T) {
 
 func TestInsertManyBadQuery(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 
 	if err := InsertMany(db, queryBad); err == nil {
 		t.Fatalf("expected error for invalid query")
@@ -1201,12 +1231,20 @@ func TestQueryClosed(t *testing.T) {
 }
 
 func fakeHammer(t *testing.T, workers, count int) *sql.DB {
-	db := hammerDB(t, "")
+	db := getHammerDB(t, "")
 	for i := 0; i < count; i++ {
 		worker := rand.Int() % workers
 		if _, err := db.Exec(hammerInsert, worker, i); err != nil {
 			t.Fatalf("worker:%d count:%d, error:%s\n", worker, i, err.Error())
 		}
+	}
+	return db
+}
+
+func cachedDB(t *testing.T) *sql.DB {
+	db, err := Open("file::memory:?cache=shared", true)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return db
 }
@@ -1221,6 +1259,7 @@ func memDB(t *testing.T) *sql.DB {
 
 func TestScanRow(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	kind := 23
 	args := []interface{}{"many1", kind}
 	q := querySelect + " limit 1"
@@ -1241,6 +1280,7 @@ func TestScanRow(t *testing.T) {
 
 func TestScanRowMissingDest(t *testing.T) {
 	db := structDb(t)
+	defer db.Close()
 	kind := 23
 	args := []interface{}{"many1", kind}
 	q := querySelect + " limit 1"

@@ -237,7 +237,8 @@ func TestOpenSqliteWithHookBadDatabase(t *testing.T) {
 
 func TestCommandsBadQuery(t *testing.T) {
 	db := memDB(t)
-	if err := Commands(db, queryBad, false, nil); err == nil {
+	query := "select asdf xyz m'kay;"
+	if err := Commands(db, query, false, nil); err == nil {
 		t.Fatal("expected error for bad query")
 	} else {
 		t.Log(err)
@@ -253,6 +254,7 @@ func TestCommandsReadMissingFile(t *testing.T) {
 		t.Log(err)
 	}
 }
+
 func TestCommandsTrigger(t *testing.T) {
 	db := structDb(t)
 	const (
@@ -262,12 +264,13 @@ CREATE TRIGGER structs_insert AFTER INSERT ON structs
 BEGIN
     insert or replace into inserted (id) values(NEW.id);
     insert or replace into inserted (msg) values('ack!');
-END;`
+END;
+`
 	)
 	if _, _, err := Exec(db, query1); err != nil {
 		t.Fatal(err)
 	}
-	if err := Commands(db, query2, false, nil); err != nil {
+	if err := Commands(db, query2, testing.Verbose(), nil); err != nil {
 		t.Fatal(err)
 	}
 }
