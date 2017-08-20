@@ -34,7 +34,7 @@ var (
 
 const (
 	// DriverName is the default driver name to be registered
-	DriverName = "dbutil"
+	DefaultDriver = "dbutil"
 )
 
 // Action represents an async write request to database
@@ -203,7 +203,7 @@ func NewInserter(db *sql.DB, queue int, errFn func(error), query string, args ..
 			}
 		}
 		i, err := result.LastInsertId()
-		if errFn != nil {
+		if err != nil && errFn != nil {
 			errFn(err)
 		}
 

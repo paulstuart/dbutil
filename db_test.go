@@ -35,16 +35,6 @@ func init() {
 	}
 }
 
-/*
-func TestSqliteFilename(t *testing.T) {
-	sqlInit(DriverName, "")
-	db, err := Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-*/
-
 func TestSqliteCreate(t *testing.T) {
 	db, err := Open(testFile)
 	if err != nil {
@@ -506,6 +496,8 @@ func BenchmarkInsertTransactionNoArgs(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	defer db.Close()
+
 	prepare(db)
 	query := "insert into structs (name,kind) values('ziggy',1984)"
 	b.ResetTimer()
@@ -536,6 +528,8 @@ func BenchmarkInsertTransactionWithArgs(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	defer db.Close()
+
 	prepare(db)
 	query := "insert into structs (name,kind) values(?,?)"
 	b.ResetTimer()
@@ -548,16 +542,39 @@ func BenchmarkInsertTransactionWithArgs(b *testing.B) {
 		tx.Rollback()
 		b.Fatal(err)
 	}
+	defer stmt.Close()
 	for i := 0; i < b.N; i++ {
 		if _, err := stmt.Exec("ziggy", 1984); err != nil {
 			b.Fatal(err)
 		}
 	}
 	tx.Commit()
-	stmt.Close()
 	b.StopTimer()
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
+	}
+}
+
+func BenchmarkInserter(b *testing.B) {
+	db, err := Open(":memory:")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+
+	prepare(db)
+	query := "insert into structs (name,kind) values(?,?)"
+	defer Close(db)
+
+	fn := func(err error) {
+		b.Fatal(err)
+	}
+
+	inserter, _ := NewInserter(db, 4096, fn, query)
+	defer inserter.Close()
+
+	for i := 0; i < b.N; i++ {
+		inserter.Insert("ziggy", 1984)
 	}
 }
 

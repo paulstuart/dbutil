@@ -351,7 +351,7 @@ func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) 
 		buffer := make([]driver.Value, len(cols))
 		if err = rows.Next(buffer); err != nil {
 			if err == io.EOF {
-				return nil
+				err = nil
 			}
 			break
 		}
@@ -377,45 +377,45 @@ func Version() (string, int, string) {
 }
 
 type SqlConfig struct {
-	FailIfMissing bool
-	Hook          string
-	Driver        string
-	Funcs         []SqliteFuncReg
+	failIfMissing bool
+	hook          string
+	driver        string
+	funcs         []SqliteFuncReg
 }
 
 type ConfigFunc func(*SqlConfig)
 
 func ConfigDriverName(name string) ConfigFunc {
 	return func(c *SqlConfig) {
-		c.Driver = name
+		c.driver = name
 	}
 }
 
 func ConfigFailIfMissing(fail bool) ConfigFunc {
 	return func(c *SqlConfig) {
-		c.FailIfMissing = fail
+		c.failIfMissing = fail
 	}
 }
 
 func ConfigHook(hook string) ConfigFunc {
 	return func(c *SqlConfig) {
-		c.Hook = hook
+		c.hook = hook
 	}
 }
 
 func ConfigFuncs(funcs ...SqliteFuncReg) ConfigFunc {
 	return func(c *SqlConfig) {
-		c.Funcs = funcs
+		c.funcs = funcs
 	}
 }
 
 // Open returns a db struct for the given file
 func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
-	config := &SqlConfig{Driver: DriverName}
+	config := &SqlConfig{driver: DefaultDriver}
 	for _, opt := range opts {
 		opt(config)
 	}
-	sqlInit(config.Driver, config.Hook, config.Funcs...)
+	sqlInit(config.driver, config.hook, config.funcs...)
 	if strings.Index(file, ":memory:") < 0 {
 		full, err := url.Parse(file)
 		if err != nil {
@@ -423,7 +423,7 @@ func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
 		}
 		filename := full.Path
 		os.Mkdir(path.Dir(filename), 0777)
-		if !config.FailIfMissing {
+		if !config.failIfMissing {
 			if _, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666); err != nil {
 				return nil, errors.Wrapf(err, "os file: %s", file)
 			}
@@ -431,7 +431,7 @@ func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open(config.Driver, file)
+	db, err := sql.Open(config.driver, file)
 	if err != nil {
 		return db, errors.Wrapf(err, "sql file: %s", file)
 	}

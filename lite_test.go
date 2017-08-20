@@ -2,9 +2,12 @@ package dbutil
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"os"
 	"testing"
+
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -12,14 +15,12 @@ const (
 )
 
 func TestFuncs(t *testing.T) {
-	sqlInit("funky", "", ipFuncs...)
-	db, err := sql.Open("funky", ":memory:")
+	db, err := Open(":memory:", ConfigFuncs(ipFuncs...), ConfigDriverName("funky"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	//const create = `create table if not exists iptest ( ip int )`
 	const create = `create table iptest ( ip int )`
 	const ins = `
 insert into iptest values(atoip('127.0.0.1'));
@@ -57,17 +58,12 @@ insert into iptest values(atoip('192.168.1.1'));
 
 func TestSqliteBadHook(t *testing.T) {
 	const badDriver = "badhook"
-	sqlInit(badDriver, queryBad)
-	db, err := sql.Open(badDriver, ":memory:")
-	defer db.Close()
+	_, err := Open(":memory:", ConfigDriverName(badDriver), ConfigHook(queryBad))
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DataVersion(db); err == nil {
+	if err == nil {
 		t.Fatal("expected error for bad hook")
 	} else {
-		t.Logf("got expected hook error: %v\n", err)
+		t.Logf("got expected error: %v\n", err)
 	}
 }
 
@@ -102,7 +98,7 @@ func TestSqliteFuncsBad(t *testing.T) {
 }
 
 func TestSqliteBadPath(t *testing.T) {
-	sqlInit(DriverName, "")
+	sqlInit(DefaultDriver, "")
 	_, err := Open(badPath)
 	if err == nil {
 		t.Fatal("expected error for bad path")
@@ -112,7 +108,7 @@ func TestSqliteBadPath(t *testing.T) {
 }
 
 func TestSqliteBadURI(t *testing.T) {
-	sqlInit(DriverName, "")
+	sqlInit(DefaultDriver, "")
 	_, err := Open("test.db ! % # mode ro bad=")
 	if err == nil {
 		t.Fatal("expected error for bad uri")
@@ -138,7 +134,8 @@ func TestBackup(t *testing.T) {
 	defer db.Close()
 
 	prepare(db)
-	if err := backup(db, "test_backup.db", 1024, testout); err != nil {
+	//if err := backup(db, "test_backup.db", 1024, testout); err != nil {
+	if err := Backup(db, "test_backup.db"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -248,5 +245,93 @@ END;
 	}
 	if err := Commands(db, query2, testing.Verbose(), nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDataVersion(t *testing.T) {
+	db := structDb(t)
+
+	i, err := DataVersion(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i < 1 {
+		t.Fatalf("expected version to be greater than zero but instead is: %d\n", i)
+	}
+}
+
+func TestConnQueryOk(t *testing.T) {
+	name := "connQuery01"
+	query := "select 23;"
+
+	fn := func(columns []string, row int, values []driver.Value) error {
+		return nil
+	}
+	drvr := &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return ConnQuery(conn, fn, query)
+		},
+	}
+	sql.Register(name, drvr)
+	_, err := sql.Open(name, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConnQueryBad(t *testing.T) {
+	name := "connQuery02"
+	fn := func(columns []string, row int, values []driver.Value) error {
+		return nil
+	}
+	drvr := &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return ConnQuery(conn, fn, queryBad)
+		},
+	}
+	sql.Register(name, drvr)
+	db, _ := sql.Open(name, ":memory:")
+	_, err := db.Query(querySelect)
+	if err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
+	}
+}
+
+func TestConnQueryFuncBad(t *testing.T) {
+	file := "test.db"
+	os.Remove(file)
+	db, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare(db)
+	Close(db)
+
+	name := "connQuery03"
+	fn := func(columns []string, row int, values []driver.Value) error {
+		return fmt.Errorf("function had an error")
+	}
+	drvr := &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return ConnQuery(conn, fn, querySelect)
+		},
+	}
+	sql.Register(name, drvr)
+	db, _ = sql.Open(name, file)
+
+	if _, err = db.Query(querySelect); err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
+	}
+}
+
+func TestOpenBadFile(t *testing.T) {
+	if _, err := Open("/path/does/not/exist/:memory:/abc123"); err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
 	}
 }
