@@ -73,7 +73,7 @@ func simpleQuery(db *sql.DB) error {
 		return err
 	}
 	if one != 1 {
-		return fmt.Errorf("expected: %d but got %d\n", 1, one)
+		return fmt.Errorf("expected: %d but got %d", 1, one)
 	}
 	return nil
 }
@@ -329,7 +329,7 @@ func TestConnQueryFuncBad(t *testing.T) {
 }
 
 func TestOpenBadFile(t *testing.T) {
-	if _, err := Open("/path/does/not/exist/:memory:/abc123"); err == nil {
+	if _, err := Open("/path/does/:mem not/ory: exist/:memory:/abc123"); err == nil {
 		t.Fatal("expected error but got none")
 	} else {
 		t.Log("got expected error:", err)

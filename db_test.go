@@ -664,8 +664,8 @@ func errLogger(t *testing.T) chan error {
 
 func TestServerWrite(t *testing.T) {
 	db := getHammerDB(t, "")
-	r := make(chan Query, 4096)
-	w := make(chan Action, 4096)
+	r := make(chan ServerQuery, 4096)
+	w := make(chan ServerAction, 4096)
 	e := errLogger(t)
 	go Server(db, r, w)
 	batter(t, w, 10, 100000)
@@ -677,7 +677,7 @@ func TestServerWrite(t *testing.T) {
 
 func TestServerRead(t *testing.T) {
 	db := fakeHammer(t, 10, 1000)
-	r := make(chan Query, 4096)
+	r := make(chan ServerQuery, 4096)
 	e := errLogger(t)
 	go Server(db, r, nil)
 	butter(t, r, 2, 10)
@@ -688,10 +688,10 @@ func TestServerRead(t *testing.T) {
 
 func TestServerBadQuery(t *testing.T) {
 	db := fakeHammer(t, 10, 1000)
-	r := make(chan Query, 4096)
+	r := make(chan ServerQuery, 4096)
 	go Server(db, r, nil)
 	ec := make(chan error)
-	r <- Query{
+	r <- ServerQuery{
 		Query: queryBad,
 		Args:  nil,
 		Reply: nullStream,
@@ -707,7 +707,7 @@ func TestServerBadQuery(t *testing.T) {
 	Close(db)
 }
 
-func batter(t *testing.T, w chan Action, workers, count int) {
+func batter(t *testing.T, w chan ServerAction, workers, count int) {
 
 	var wg sync.WaitGroup
 
@@ -723,7 +723,7 @@ func batter(t *testing.T, w chan Action, workers, count int) {
 			t.Logf("worker:%d\n", worker)
 			for cnt := range queue {
 				wg.Add(1)
-				w <- Action{
+				w <- ServerAction{
 					Query:    hammerInsert,
 					Args:     []interface{}{worker, cnt},
 					Callback: response,
@@ -757,7 +757,7 @@ func testReceiver(t *testing.T, callback chan int) RowFunc {
 	}
 }
 
-func makeReader(t *testing.T, r chan Query, queue, workers, count int) func(query string, args ...interface{}) chan int {
+func makeReader(t *testing.T, r chan ServerQuery, queue, workers, count int) func(query string, args ...interface{}) chan int {
 	return func(query string, args ...interface{}) chan int {
 		cb := make(chan int)
 		tr := testReceiver(t, cb)
@@ -781,7 +781,7 @@ func makeReader(t *testing.T, r chan Query, queue, workers, count int) func(quer
 				go func(worker int) {
 					t.Logf("worker:%d\n", worker)
 					for _ = range qc {
-						r <- Query{
+						r <- ServerQuery{
 							Query: query,
 							Args:  args,
 							Reply: tr,
@@ -803,7 +803,7 @@ func makeReader(t *testing.T, r chan Query, queue, workers, count int) func(quer
 	}
 }
 
-func butter(t *testing.T, r chan Query, workers, count int) {
+func butter(t *testing.T, r chan ServerQuery, workers, count int) {
 
 	limit := 100
 	var wg sync.WaitGroup
@@ -836,7 +836,7 @@ func butter(t *testing.T, r chan Query, workers, count int) {
 			t.Logf("worker:%d\n", worker)
 			for _ = range queue {
 				wg.Add(1)
-				r <- Query{
+				r <- ServerQuery{
 					Query: query,
 					Args:  []interface{}{limit},
 					Reply: replies,

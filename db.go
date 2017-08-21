@@ -33,12 +33,12 @@ var (
 )
 
 const (
-	// DriverName is the default driver name to be registered
+	// DefaultDriver is the default driver name to be registered
 	DefaultDriver = "dbutil"
 )
 
-// Action represents an async write request to database
-type Action struct {
+// ServerAction represents an async write request to database
+type ServerAction struct {
 	Query    string
 	Args     []interface{}
 	Callback func(int64, int64, error)
@@ -47,8 +47,8 @@ type Action struct {
 // RowFunc is a function called for each row by Stream
 type RowFunc func([]string, int, []interface{}) error
 
-// Query represents an async read request to database
-type Query struct {
+// ServerQuery represents an async read request to database
+type ServerQuery struct {
 	Query string
 	Args  []interface{}
 	Reply RowFunc
@@ -248,10 +248,12 @@ func scanRow(rows *sql.Rows, dest []interface{}, columns ...string) ([]interface
 	return buffer, nil
 }
 
+// Streamer can stream queries to a writer
 type Streamer struct {
 	db *sql.DB
 }
 
+// NewStreamer returns a Streamer
 func NewStreamer(db *sql.DB) *Streamer {
 	return &Streamer{db}
 }
@@ -409,8 +411,7 @@ func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interfac
 */
 
 // Server provides serialized access to the database
-//func Server(db *sql.DB, r chan Query, w chan Action, e chan error) {
-func Server(db *sql.DB, r chan Query, w chan Action) {
+func Server(db *sql.DB, r chan ServerQuery, w chan ServerAction) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

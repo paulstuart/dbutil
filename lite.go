@@ -376,42 +376,48 @@ func Version() (string, int, string) {
 	return sqlite3.Version()
 }
 
-type SqlConfig struct {
+// SQLConfig represents the sqlite configuration options
+type SQLConfig struct {
 	failIfMissing bool
 	hook          string
 	driver        string
 	funcs         []SqliteFuncReg
 }
 
-type ConfigFunc func(*SqlConfig)
+// ConfigFunc processes an SQLConfig
+type ConfigFunc func(*SQLConfig)
 
+// ConfigDriverName specifies the driver name to use
 func ConfigDriverName(name string) ConfigFunc {
-	return func(c *SqlConfig) {
+	return func(c *SQLConfig) {
 		c.driver = name
 	}
 }
 
+//ConfigFailIfMissing requires the database to exist before opening
 func ConfigFailIfMissing(fail bool) ConfigFunc {
-	return func(c *SqlConfig) {
+	return func(c *SQLConfig) {
 		c.failIfMissing = fail
 	}
 }
 
+// ConfigHook specifies the connection hook query to run
 func ConfigHook(hook string) ConfigFunc {
-	return func(c *SqlConfig) {
+	return func(c *SQLConfig) {
 		c.hook = hook
 	}
 }
 
+// ConfigFuncs specifies the sqlite functions to register
 func ConfigFuncs(funcs ...SqliteFuncReg) ConfigFunc {
-	return func(c *SqlConfig) {
+	return func(c *SQLConfig) {
 		c.funcs = funcs
 	}
 }
 
 // Open returns a db struct for the given file
 func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
-	config := &SqlConfig{driver: DefaultDriver}
+	config := &SQLConfig{driver: DefaultDriver}
 	for _, opt := range opts {
 		opt(config)
 	}
