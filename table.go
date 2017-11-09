@@ -8,6 +8,17 @@ import (
 	"text/tabwriter"
 )
 
+var (
+	repl = strings.NewReplacer(
+		"\n", "\\\\n",
+		"\t", "\\\\t",
+		"\r", "\\\\r",
+		`"`, `\"`,
+		"_", " ",
+		"-", " ",
+	)
+)
+
 func strlen(v interface{}) int {
 	switch v := v.(type) {
 	case string:

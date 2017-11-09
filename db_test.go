@@ -210,42 +210,6 @@ type numChk struct {
 	good bool
 }
 
-func TestIsNumber(t *testing.T) {
-	u := unknownStruct{}
-	nList := []numChk{
-		{1, true},
-		{"10", true},
-		{"10", true},
-		{"10abc", false},
-		{"0x123", true},
-		{"0xdeadbeef", true},
-		{"0xnotvalid", false},
-		{"x", false},
-		{"000000", false},
-		{u, false},
-	}
-	for _, n := range nList {
-		if (nil == isNumber(n.item)) != n.good {
-			t.Errorf("%v expected to be %t\n", n.item, n.good)
-		}
-	}
-}
-
-/*
-type twriter testing.T
-
-func NewTestlog(t *testing.T) *log.Logger {
-	w := (*twriter)(t)
-	return log.New(w, "", 0)
-}
-
-func (w *twriter) Write(p []byte) (int, error) {
-	t := (*testing.T)(w)
-	t.Logf("%s\n", string(p))
-	return len(p), nil
-}
-*/
-
 func prepare(db *sql.DB) {
 	const query = "insert into structs(name, kind, data) values(?,?,?)"
 
@@ -383,15 +347,17 @@ func BenchmarkQueryPrepared(b *testing.B) {
 }
 
 func nullStream(columns []string, count int, buffer []interface{}) error {
-	f := ioutil.Discard
-	tabs := len(buffer) - 1
-	for i, item := range buffer {
-		fmt.Fprint(f, item)
-		if i < tabs {
-			fmt.Fprint(f, "\t")
+	/*
+		f := ioutil.Discard
+		tabs := len(buffer) - 1
+		for i, item := range buffer {
+			fmt.Fprint(f, item)
+			if i < tabs {
+				fmt.Fprint(f, "\t")
+			}
 		}
-	}
-	fmt.Fprint(f, "\n")
+		fmt.Fprint(f, "\n")
+	*/
 	return nil
 }
 

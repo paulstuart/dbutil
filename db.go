@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,18 +16,6 @@ import (
 )
 
 var (
-	mu sync.Mutex
-
-	digits  = regexp.MustCompile("^[0-9]+$")
-	numeric = regexp.MustCompile("^[0-9]+(\\.[0-9])?$")
-	repl    = strings.NewReplacer(
-		"\n", "\\\\n",
-		"\t", "\\\\t",
-		"\r", "\\\\r",
-		`"`, `\"`,
-		"_", " ",
-		"-", " ",
-	)
 	testout = ioutil.Discard
 )
 
@@ -322,32 +309,6 @@ func (s *Streamer) Tab(w io.Writer, query string, args ...interface{}) error {
 	return s.Stream(fn, query, args...)
 }
 
-func isNumber(d interface{}) error {
-	switch d := d.(type) {
-	case int, int32, int64, float32, float64:
-		return nil
-	case string:
-		// multiple leading zeros is likely a string
-		if strings.HasPrefix(d, "00") {
-			return fmt.Errorf("00 prefix indicates string")
-		}
-		if strings.HasPrefix(d, "0x") {
-			var i int
-			r := strings.NewReader(d)
-			if _, err := fmt.Fscanf(r, "0x%x", &i); err != nil {
-				return errors.Wrap(err, "hex err")
-			}
-			return nil
-		}
-		if numeric.Match([]byte(strings.TrimSpace(d))) {
-			return nil
-		}
-		return fmt.Errorf("not a numeric match")
-	default:
-		return fmt.Errorf("unknown type: %v", d)
-	}
-}
-
 // JSON streams the query results as JSON to the writer
 func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
@@ -360,55 +321,11 @@ func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
 		}
 		enc := json.NewEncoder(w)
 		return enc.Encode(obj)
-		/*
-			fmt.Fprintln(w, "  {")
-			for i, b := range buffer {
-				comma := ",\n"
-				if i >= len(buffer)-1 {
-					comma = "\n"
-				}
-				if isNumber(b) {
-					fmt.Fprintf(w, `    "%s": %v%s`, columns[i], b, comma)
-				} else {
-					//s := fmt.Sprintf("%v", b)
-					//s = repl.Replace(s)
-					//fmt.Fprintf(w, `    "%s": "%s"%s`, columns[i], s, comma)
-					fmt.Fprintf(w, `    "%s": "%v"%s`, columns[i], s, comma)
-				}
-			}
-			fmt.Fprint(w, "  }")
-		*/
 	}
 	fmt.Fprintln(w, "[")
 	defer fmt.Fprintln(w, "\n]")
 	return s.Stream(fn, query, args...)
 }
-
-// Iterator returns query results
-type Iterator func() (values []interface{}, ok bool)
-
-/*
-// Generator returns an iterator for a query
-func Generator(db *sql.DB, query string, args ...interface{}) func() ([]interface{}, bool) {
-	c := make(chan []interface{})
-	fn := func(columns []string, row int, values []interface{}) error {
-		c <- values
-		return nil
-	}
-	iter := func() ([]interface{}, bool) {
-		values, ok := <-c
-		return values, ok
-	}
-	go func() {
-		if err := Stream(db, fn, query); err != nil {
-			panic(err)
-		}
-		close(c)
-	}()
-
-	return iter
-}
-*/
 
 // Server provides serialized access to the database
 func Server(db *sql.DB, r chan ServerQuery, w chan ServerAction) {
@@ -433,8 +350,7 @@ func Server(db *sql.DB, r chan ServerQuery, w chan ServerAction) {
 	wg.Add(1)
 	go func() {
 		for q := range w {
-			affected, last, err := Exec(db, q.Query, q.Args...)
-			q.Callback(affected, last, err)
+			q.Callback(Exec(db, q.Query, q.Args...))
 		}
 		wg.Done()
 	}()

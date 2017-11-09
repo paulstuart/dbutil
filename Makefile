@@ -24,17 +24,20 @@ show:	profile html
 cover:
 	@go test -cover $(arg1)  $(goflags) ./...
 
+escape:
+	@go build -gcflags '-m' db.go lite.go table.go
+
 # for building static distribution on Alpine Linux
 # https://dominik.honnef.co/posts/2015/06/go-musl/#flavor-be-gone
 alpine:
 	CC=/usr/bin/x86_64-alpine-linux-musl-gcc go build --ldflags '-linkmode external -extldflags "-static"'
 
 test: 
-	@go test $(arg1)
+	@go test $(GOFLAGS)
 
 clean:
 	@go clean $(GOFLAGS) -i ./...
 
-.PHONY: all test clean build alpine install fresh cover profile html show
+.PHONY: all test clean build alpine install fresh cover profile html show escape
 
 ## EOF
