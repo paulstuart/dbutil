@@ -32,6 +32,9 @@ var (
 //wal_checkpoint
 
 const (
+	// DefaultDriver is the default driver name to be registered
+	DefaultDriver = "dbutil"
+
 	pragmaList = `
 	application_id
 	auto_vacuum
@@ -173,7 +176,7 @@ func sqlInit(name, hook string, funcs ...SqliteFuncReg) {
 // Filename returns the filename of the DB
 func Filename(db *sql.DB) string {
 	var seq, name, file string
-	Get(db, "PRAGMA database_list", nil, &seq, &name, &file)
+	Row(db, []interface{}{&seq, &name, &file}, "PRAGMA database_list")
 	return file
 }
 
@@ -192,6 +195,12 @@ func ConnFilename(conn *sqlite3.SQLiteConn) (string, error) {
 	}
 	err := ConnQuery(conn, fn, "PRAGMA database_list")
 	return filename, err
+}
+
+// Close cleans up the database before closing
+func Close(db *sql.DB) {
+	Exec(db, "PRAGMA wal_checkpoint(TRUNCATE)")
+	db.Close()
 }
 
 // Backup backs up the open database
@@ -366,8 +375,7 @@ func ConnQuery(conn *sqlite3.SQLiteConn, fn func([]string, int, []driver.Value) 
 // DataVersion returns the version number of the schema
 func DataVersion(db *sql.DB) (int64, error) {
 	var version int64
-	_, err := Get(db, "PRAGMA data_version", nil, &version)
-	return version, err
+	return version, Row(db, []interface{}{&version}, "PRAGMA data_version")
 }
 
 // Version returns the version of the sqlite library used
@@ -442,4 +450,49 @@ func Open(file string, opts ...ConfigFunc) (*sql.DB, error) {
 		return db, errors.Wrapf(err, "sql file: %s", file)
 	}
 	return db, db.Ping()
+}
+
+// ServerAction represents an async write request to database
+type ServerAction struct {
+	Query    string
+	Args     []interface{}
+	Callback func(int64, int64, error)
+}
+
+// ServerQuery represents an async read request to database
+type ServerQuery struct {
+	Query string
+	Args  []interface{}
+	Reply RowFunc
+	Error chan error
+}
+
+// Server provides serialized access to the database
+func Server(db *sql.DB, r chan ServerQuery, w chan ServerAction) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		for q := range r {
+			err := stream(db, q.Reply, q.Query, q.Args...)
+
+			if q.Error != nil {
+				// use goroutine so we don't block on sending errors
+				go func() {
+					if err != nil {
+						err = errors.Wrapf(err, "stream error")
+					}
+					q.Error <- err
+				}()
+			}
+		}
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		for q := range w {
+			q.Callback(Exec(db, q.Query, q.Args...))
+		}
+		wg.Done()
+	}()
+	wg.Wait()
 }

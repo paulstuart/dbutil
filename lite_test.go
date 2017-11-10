@@ -36,9 +36,8 @@ insert into iptest values(atoip('192.168.1.1'));
 
 	const testIP = "192.168.1.1"
 	var ipv4 string
-	args := []interface{}{testIP}
 
-	if _, err := Get(db, "select iptoa(ip) as ipv4 from iptest where ipv4 = ?", args, &ipv4); err != nil {
+	if err := Row(db, []interface{}{&ipv4}, "select iptoa(ip) as ipv4 from iptest where ipv4 = ?", testIP); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,7 +46,7 @@ insert into iptest values(atoip('192.168.1.1'));
 	}
 
 	var ip32 int32
-	if _, err := Get(db, "select atoip('8.8.8') as ipv4", nil, &ip32); err != nil {
+	if err := Row(db, []interface{}{&ip32}, "select atoip('8.8.8') as ipv4"); err != nil {
 		t.Fatal(err)
 	} else {
 		if ip32 != -1 {
@@ -69,7 +68,8 @@ func TestSqliteBadHook(t *testing.T) {
 
 func simpleQuery(db *sql.DB) error {
 	var one int
-	if _, err := Get(db, "select 1", nil, &one); err != nil {
+	dest := []interface{}{&one}
+	if err := Row(db, dest, "select 1", nil); err != nil {
 		return err
 	}
 	if one != 1 {
@@ -164,10 +164,9 @@ func TestFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	limit := 3
-	args := []interface{}{"USA", limit}
 	var total int64
-	_, err := Get(db, "select total from summary where country=? limit ?", args, &total)
-	if err != nil {
+	dest := []interface{}{&total}
+	if err := Row(db, dest, "select total from summary where country=? limit ?", "USA", limit); err != nil {
 		t.Fatal(err)
 	}
 	if total != 3 {
