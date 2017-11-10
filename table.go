@@ -104,7 +104,7 @@ func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, 
 	}
 
 	return tw, func(columns []string, row int, values []interface{}) error {
-		if header && row == 0 {
+		if header && row == 1 {
 			head := make([]interface{}, len(columns))
 			for i, col := range columns {
 				head[i] = repl.Replace(col)

@@ -825,5 +825,5 @@ func TestInserter(t *testing.T) {
 	if testing.Verbose() {
 		out = os.Stdout
 	}
-	NewStreamer(db, "select * from structs").TSV(out)
+	NewStreamer(db, "select * from structs").Table(out, true, nil)
 }
