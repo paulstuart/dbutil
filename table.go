@@ -70,8 +70,9 @@ type TableConfig struct {
 	Flags                       uint
 }
 
-// DefaultConfig returns a TableConfig struct with reasonable defaults
-func DefaultConfig() *TableConfig {
+// defaultConfig returns a TableConfig struct with reasonable defaults
+func defaultConfig() *TableConfig {
+	// minwidth, tabwidth, padding, padchar, flags
 	return &TableConfig{0, 8, 1, ' ', 0}
 }
 
@@ -81,10 +82,9 @@ func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, 
 	}
 
 	if config == nil {
-		config = DefaultConfig()
+		config = defaultConfig()
 	}
 
-	// tabwriter.NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer
 	// Format in tab-separated columns with a tab stop of 8.
 	tw := tabwriter.NewWriter(w, config.Minwidth, config.Tabwidth, config.Padding, config.Padchar, config.Flags)
 
