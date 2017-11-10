@@ -65,9 +65,11 @@ func underlines(cols []interface{}) []interface{} {
 
 // TableConfig contains tabwriter configuration settings
 type TableConfig struct {
-	Minwidth, Tabwidth, Padding int
-	Padchar                     byte
-	Flags                       uint
+	Minwidth int  // Minimum column width
+	Tabwidth int  // Tab width
+	Padding  int  // Number of padding characters
+	Padchar  byte // Padding character
+	Flags    uint // Flags are noted above
 }
 
 // defaultConfig returns a TableConfig struct with reasonable defaults
@@ -77,10 +79,6 @@ func defaultConfig() *TableConfig {
 }
 
 func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
-	if nil == w {
-		w = testout
-	}
-
 	if config == nil {
 		config = defaultConfig()
 	}
@@ -119,7 +117,8 @@ func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, 
 	}
 }
 
-// PrintTable prints a tabular format to the writer
+// Table prints a tabular format to the writer
+// Formatting is controlled by TableConfig values
 func (s *Streamer) Table(w io.Writer, header bool, config *TableConfig) error {
 	tw, table := tabular(w, header, config)
 	defer tw.Flush()

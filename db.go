@@ -1,5 +1,6 @@
-// Package dbutil provides helper functions for database queries
-// It has no external dependencies, just using stdlib
+// Package dbutil provides helper functions for database queries.
+//
+// It has no external dependencies, just stdlib.
 package dbutil
 
 import (
@@ -13,7 +14,8 @@ import (
 	"time"
 )
 
-// RowFunc is a function called for each row by Stream
+// RowFunc is a function called for each row by Stream (columns, row number, values)
+// Row numbering starts at 1
 type RowFunc func([]string, int, []interface{}) error
 
 func toString(in []interface{}) ([]string, error) {
@@ -185,7 +187,7 @@ func stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 		dest[k] = &buffer[k]
 	}
 
-	i := 0
+	i := 1
 	for rows.Next() {
 		if err := rows.Scan(dest...); err != nil {
 			return err
