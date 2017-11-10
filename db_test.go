@@ -153,37 +153,11 @@ func TestStreamBadFunc(t *testing.T) {
 	}
 }
 
-func xTestStreamMissingArgs(t *testing.T) {
-	db := structDb(t)
-	defer db.Close()
-
-	/*
-		var name string
-		dest := []interface{}{&name}
-	*/
-
-	//func stream(db *sql.DB, dest []interface{}, fn RowFunc, query string, args ...interface{}) error {
-	if err := stream(db, nullStream, querySelect); err == nil {
-		t.Fatal("expected missing args error")
-	} else {
-		t.Log(err)
-	}
-}
-
-type Writer struct {
-	Prefix string
-}
-
-func (w *Writer) Write(p []byte) (n int, err error) {
-	return fmt.Fprint(ioutil.Discard, string(p))
-}
-
 func TestStreamCSV(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	w := &Writer{"CSV:"}
 
-	if err := NewStreamer(db).CSV(w, querySelect); err != nil {
+	if err := NewStreamer(db).CSV(ioutil.Discard, querySelect); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -191,8 +165,8 @@ func TestStreamCSV(t *testing.T) {
 func TestStreamTab(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	w := &Writer{"TAB:"}
-	if err := NewStreamer(db).Tab(w, querySelect); err != nil {
+
+	if err := NewStreamer(db).Tab(ioutil.Discard, querySelect); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -200,16 +174,11 @@ func TestStreamTab(t *testing.T) {
 func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	w := &Writer{"JSON:"}
-	err := NewStreamer(db).JSON(w, querySelect)
+
+	err := NewStreamer(db).JSON(ioutil.Discard, querySelect)
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-type numChk struct {
-	item interface{}
-	good bool
 }
 
 func prepare(db *sql.DB) {
@@ -508,29 +477,6 @@ func BenchmarkInsertTransactionWithArgs(b *testing.B) {
 	}
 }
 
-func BenchmarkInserter(b *testing.B) {
-	db, err := Open(":memory:")
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer db.Close()
-
-	prepare(db)
-	query := "insert into structs (name,kind) values(?,?)"
-	defer Close(db)
-
-	fn := func(err error) {
-		b.Fatal(err)
-	}
-
-	inserter, _ := NewInserter(db, 4096, fn, query)
-	defer inserter.Close()
-
-	for i := 0; i < b.N; i++ {
-		inserter.Insert("ziggy", 1984)
-	}
-}
-
 const (
 	hammerTime = `
 drop table if exists hammer;
@@ -570,10 +516,6 @@ func hammerDb(t *testing.T, db *sql.DB, workers, count int) {
 			for cnt := range queue {
 				if _, err := db.Exec(hammerInsert, worker, cnt); err != nil {
 					t.Errorf("worker:%d count:%d, error:%s\n", worker, cnt, err.Error())
-					/*
-						} else {
-							t.Logf("worker:%d count:%d\n", worker, cnt)
-					*/
 				}
 			}
 			wg.Done()
@@ -603,300 +545,6 @@ func getHammerDB(t *testing.T, name string) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
-}
-
-func errLogger(t *testing.T) chan error {
-	e := make(chan error, 4096)
-	go func() {
-		for err := range e {
-			t.Error(err)
-		}
-	}()
-	return e
-}
-
-func TestServerWrite(t *testing.T) {
-	db := getHammerDB(t, "")
-	r := make(chan ServerQuery, 4096)
-	w := make(chan ServerAction, 4096)
-	e := errLogger(t)
-	go Server(db, r, w)
-	batter(t, w, 10, 100000)
-	close(r)
-	close(w)
-	close(e)
-	Close(db)
-}
-
-func TestServerRead(t *testing.T) {
-	db := fakeHammer(t, 10, 1000)
-	r := make(chan ServerQuery, 4096)
-	e := errLogger(t)
-	go Server(db, r, nil)
-	butter(t, r, 2, 10)
-	close(r)
-	close(e)
-	Close(db)
-}
-
-func TestServerBadQuery(t *testing.T) {
-	db := fakeHammer(t, 10, 1000)
-	r := make(chan ServerQuery, 4096)
-	go Server(db, r, nil)
-	ec := make(chan error)
-	r <- ServerQuery{
-		Query: queryBad,
-		Args:  nil,
-		Reply: nullStream,
-		Error: ec,
-	}
-	close(r)
-	err := <-ec
-	if err == nil {
-		t.Fatal("expected missing args error")
-	} else {
-		t.Log(err)
-	}
-	Close(db)
-}
-
-func batter(t *testing.T, w chan ServerAction, workers, count int) {
-
-	var wg sync.WaitGroup
-
-	response := func(affected, last int64, err error) {
-		//	t.Logf("aff:%d last:%d err:%v\n", affected, last, err)
-		wg.Done()
-	}
-
-	queue := make(chan int, 4096)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(worker int) {
-			t.Logf("worker:%d\n", worker)
-			for cnt := range queue {
-				wg.Add(1)
-				w <- ServerAction{
-					Query:    hammerInsert,
-					Args:     []interface{}{worker, cnt},
-					Callback: response,
-				}
-			}
-			wg.Done()
-			t.Logf("done:%d\n", worker)
-		}(i)
-	}
-	for i := 0; i < count; i++ {
-		queue <- i
-	}
-	close(queue)
-	wg.Wait()
-	t.Log("battered")
-}
-
-func testReceiver(t *testing.T, callback chan int) RowFunc {
-	var tally int
-	go func() {
-		callback <- tally
-	}()
-
-	return func(columns []string, row int, values []interface{}) error {
-		if row == 0 {
-			t.Logf("columns: %v\n", columns)
-		}
-		t.Logf("row:%d values:%v\n", row, values)
-		tally++
-		return nil
-	}
-}
-
-func makeReader(t *testing.T, r chan ServerQuery, queue, workers, count int) func(query string, args ...interface{}) chan int {
-	return func(query string, args ...interface{}) chan int {
-		cb := make(chan int)
-		tr := testReceiver(t, cb)
-		qc := make(chan int, queue)
-		ec := make(chan error, count)
-		var wg sync.WaitGroup
-		go func() {
-			for err := range ec {
-				fmt.Println("err back:", err)
-				if err != nil {
-					t.Fatal(err)
-				}
-				wg.Done()
-			}
-		}()
-
-		go func() {
-			for i := 0; i < workers; i++ {
-				fmt.Println("WORKER:", i)
-				wg.Add(1)
-				go func(worker int) {
-					t.Logf("worker:%d\n", worker)
-					for _ = range qc {
-						r <- ServerQuery{
-							Query: query,
-							Args:  args,
-							Reply: tr,
-							Error: ec,
-						}
-						fmt.Println("added query:", worker)
-					}
-					wg.Done()
-					t.Logf("done:%d\n", worker)
-				}(i)
-			}
-			for i := 0; i < count; i++ {
-				qc <- i
-			}
-			close(qc)
-			wg.Wait()
-		}()
-		return cb
-	}
-}
-
-func butter(t *testing.T, r chan ServerQuery, workers, count int) {
-
-	limit := 100
-	var wg sync.WaitGroup
-
-	ec := make(chan error, count)
-	var tally int
-	replies := func(columns []string, row int, values []interface{}) error {
-		if row == 0 {
-			t.Logf("columns: %v\n", columns)
-		}
-		t.Logf("row:%d values:%v\n", row, values)
-		tally++
-		return nil
-	}
-
-	go func() {
-		for err := range ec {
-			if err != nil {
-				t.Fatal(err)
-			}
-			wg.Done()
-		}
-	}()
-
-	query := "select * from hammer limit ?"
-	queue := make(chan int, 4096)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(worker int) {
-			t.Logf("worker:%d\n", worker)
-			for _ = range queue {
-				wg.Add(1)
-				r <- ServerQuery{
-					Query: query,
-					Args:  []interface{}{limit},
-					Reply: replies,
-					Error: ec,
-				}
-			}
-			wg.Done()
-			t.Logf("done:%d\n", worker)
-		}(i)
-	}
-	for i := 0; i < count; i++ {
-		queue <- i
-	}
-	close(queue)
-	wg.Wait()
-	limit *= count
-	if tally != limit {
-		t.Errorf("expected %d rows but got back %d\n", limit, tally)
-	}
-	t.Log("buttered")
-}
-
-func TestInserterBadQuery(t *testing.T) {
-	db := getHammerDB(t, "bulk.db")
-
-	fn := func(err error) {
-		t.Log(err)
-	}
-
-	if _, err := NewInserter(db, 4096, fn, queryBad); err == nil {
-		t.Error("expected query error")
-	} else {
-		t.Log(err)
-	}
-	Close(db)
-}
-
-func TestInserterClosed(t *testing.T) {
-	db := getHammerDB(t, "bulk.db")
-
-	fn := func(err error) {
-		t.Log(err)
-	}
-
-	Close(db)
-	if _, err := NewInserter(db, 4096, fn, hammerInsert); err == nil {
-		t.Error("expected query error")
-	} else {
-		t.Log(err)
-	}
-}
-
-func TestInserterMissingArgs(t *testing.T) {
-	db := getHammerDB(t, "bulk.db")
-	defer Close(db)
-
-	fn := func(err error) {
-		if err == nil {
-			t.Fatal("expected missing args error")
-		} else {
-			t.Log(err)
-		}
-	}
-	inserter, err := NewInserter(db, 4096, fn, hammerInsert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inserter.Insert(1)
-}
-
-func TestInserter(t *testing.T) {
-	db := getHammerDB(t, "bulk.db")
-	defer Close(db)
-
-	fn := func(err error) {
-		t.Log(err)
-	}
-	inserter, err := NewInserter(db, 4096, fn, hammerInsert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	slam(t, inserter, 10, 1000000)
-}
-
-func slam(t *testing.T, inserter *Inserter, workers, count int) {
-	t.Logf("slamming %d workers for %d iterations\n", workers, count)
-	var wg sync.WaitGroup
-
-	wg.Add(workers)
-	queue := make(chan int, 4096)
-	for i := 0; i < workers; i++ {
-		go func(worker int) {
-			t.Logf("worker:%d\n", worker)
-			for cnt := range queue {
-				inserter.Insert(worker, cnt)
-			}
-			wg.Done()
-			t.Logf("done:%d\n", worker)
-		}(i)
-	}
-	for i := 0; i < count; i++ {
-		queue <- i
-	}
-	close(queue)
-	wg.Wait()
-	i := inserter.Close()
-	t.Logf("last: %d\n", i)
 }
 
 func TestColumnsEmpty(t *testing.T) {

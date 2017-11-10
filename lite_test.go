@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
@@ -333,4 +334,149 @@ func TestOpenBadFile(t *testing.T) {
 	} else {
 		t.Log("got expected error:", err)
 	}
+}
+
+func errLogger(t *testing.T) chan error {
+	e := make(chan error, 4096)
+	go func() {
+		for err := range e {
+			t.Error(err)
+		}
+	}()
+	return e
+}
+
+func TestServerWrite(t *testing.T) {
+	db := getHammerDB(t, "")
+	r := make(chan ServerQuery, 4096)
+	w := make(chan ServerAction, 4096)
+	e := errLogger(t)
+	go Server(db, r, w)
+	batter(t, w, 10, 100000)
+	close(r)
+	close(w)
+	close(e)
+	Close(db)
+}
+
+func TestServerRead(t *testing.T) {
+	db := fakeHammer(t, 10, 1000)
+	r := make(chan ServerQuery, 4096)
+	e := errLogger(t)
+	go Server(db, r, nil)
+	butter(t, r, 2, 10)
+	close(r)
+	close(e)
+	Close(db)
+}
+
+func TestServerBadQuery(t *testing.T) {
+	db := fakeHammer(t, 10, 1000)
+	r := make(chan ServerQuery, 4096)
+	go Server(db, r, nil)
+	ec := make(chan error)
+	r <- ServerQuery{
+		Query: queryBad,
+		Args:  nil,
+		Reply: nullStream,
+		Error: ec,
+	}
+	close(r)
+	err := <-ec
+	if err == nil {
+		t.Fatal("expected missing args error")
+	} else {
+		t.Log(err)
+	}
+	Close(db)
+}
+
+func batter(t *testing.T, w chan ServerAction, workers, count int) {
+
+	var wg sync.WaitGroup
+
+	response := func(affected, last int64, err error) {
+		//	t.Logf("aff:%d last:%d err:%v\n", affected, last, err)
+		wg.Done()
+	}
+
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for cnt := range queue {
+				wg.Add(1)
+				w <- ServerAction{
+					Query:    hammerInsert,
+					Args:     []interface{}{worker, cnt},
+					Callback: response,
+				}
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	t.Log("battered")
+}
+
+func butter(t *testing.T, r chan ServerQuery, workers, count int) {
+
+	limit := 100
+	var wg sync.WaitGroup
+
+	ec := make(chan error, count)
+	var tally int
+	replies := func(columns []string, row int, values []interface{}) error {
+		if row == 0 {
+			t.Logf("columns: %v\n", columns)
+		}
+		t.Logf("row:%d values:%v\n", row, values)
+		tally++
+		return nil
+	}
+
+	go func() {
+		for err := range ec {
+			if err != nil {
+				t.Fatal(err)
+			}
+			wg.Done()
+		}
+	}()
+
+	query := "select * from hammer limit ?"
+	queue := make(chan int, 4096)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			t.Logf("worker:%d\n", worker)
+			for _ = range queue {
+				wg.Add(1)
+				r <- ServerQuery{
+					Query: query,
+					Args:  []interface{}{limit},
+					Reply: replies,
+					Error: ec,
+				}
+			}
+			wg.Done()
+			t.Logf("done:%d\n", worker)
+		}(i)
+	}
+	for i := 0; i < count; i++ {
+		queue <- i
+	}
+	close(queue)
+	wg.Wait()
+	limit *= count
+	if tally != limit {
+		t.Errorf("expected %d rows but got back %d\n", limit, tally)
+	}
+	t.Log("buttered")
 }
