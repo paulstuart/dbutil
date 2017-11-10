@@ -275,3 +275,55 @@ func RowMap(db *sql.DB, query string, args ...interface{}) (map[string]interface
 
 	return reply, nil
 }
+
+type inserted struct {
+	args []interface{}
+	err  chan error
+}
+
+// Inserter enables inserting multiple records in a single transaction
+type Inserter struct {
+	c   chan inserted
+	err chan error
+}
+
+// Insert inserts a record in a transaction
+func (i Inserter) Insert(args ...interface{}) error {
+	err := make(chan error)
+	i.c <- inserted{args, err}
+	return <-err
+}
+
+// Close closes the insert transaction
+func (i Inserter) Close() error {
+	close(i.c)
+	return <-i.err
+}
+
+// NewInserter returns an Inserter that allows inserting  multiple records as a single transaction
+func NewInserter(db *sql.DB, query string) (*Inserter, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	c := make(chan inserted)
+	e := make(chan error)
+	inserter := Inserter{c, e}
+	go func() {
+		for i := range c {
+			if _, err = stmt.Exec(i.args...); err != nil {
+				tx.Rollback()
+				i.err <- err
+				return
+			}
+			i.err <- nil
+		}
+		e <- tx.Commit()
+	}()
+	return &inserter, nil
+}

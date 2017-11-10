@@ -29,6 +29,13 @@ const (
 var (
 	testFile = "test.db"
 	testout  = ioutil.Discard
+
+	testData = [][]interface{}{
+		{"abc", 23, "what ev er"},
+		{"def", 69, "m'kay"},
+		{"hij", 42, "meaning of life"},
+		{"klm", 2, "of a kind"},
+	}
 )
 
 type testStruct struct {
@@ -52,6 +59,7 @@ func (t *testStruct) Fields() []interface{} {
 func init() {
 	os.Remove(testFile)
 	if testing.Verbose() {
+		fmt.Println("VERBOSE!")
 		testout = os.Stdout
 	}
 	sql.Register(testDriver, &sqlite3.SQLiteDriver{})
@@ -61,8 +69,16 @@ func open(file string) (*sql.DB, error) {
 	return sql.Open(testDriver, file)
 }
 
-func structDb(t *testing.T) *sql.DB {
+func emptyTable(t *testing.T) *sql.DB {
 	db := memDB(t)
+	if _, err := db.Exec(queryCreate); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func structDb(t *testing.T) *sql.DB {
+	db := emptyTable(t)
 	prepare(db)
 	return db
 }
@@ -142,14 +158,9 @@ func TestStreamJSON(t *testing.T) {
 
 func prepare(db *sql.DB) {
 	const query = "insert into structs(name, kind, data) values(?,?,?)"
-
-	if _, _, err := Exec(db, queryCreate); err != nil {
-		panic(err)
+	for _, data := range testData {
+		db.Exec(query, data...)
 	}
-	Exec(db, query, "abc", 23, "what ev er")
-	Exec(db, query, "def", 69, "m'kay")
-	Exec(db, query, "hij", 42, "meaning of life")
-	Exec(db, query, "klm", 2, "of a kind")
 }
 
 func BenchmarkQueryAdHoc(b *testing.B) {
@@ -795,4 +806,24 @@ func TestDBStrings(t *testing.T) {
 	} else {
 		t.Log(cols)
 	}
+}
+
+func TestInserter(t *testing.T) {
+	db := emptyTable(t)
+	const q1 = "insert into structs(name, kind, data) values(?,?,?)"
+	insert, err := NewInserter(db, q1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range testData {
+		insert.Insert(row...)
+	}
+	if err := insert.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := ioutil.Discard
+	if testing.Verbose() {
+		out = os.Stdout
+	}
+	NewStreamer(db, "select * from structs").TSV(out)
 }
