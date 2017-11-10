@@ -1,3 +1,5 @@
+// Package dbutil provides helper functions for database queries
+// It has no external dependencies, just using stdlib
 package dbutil
 
 import (
@@ -6,14 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strconv"
 	"strings"
 	"time"
-)
-
-var (
-	testout = ioutil.Discard
 )
 
 // RowFunc is a function called for each row by Stream

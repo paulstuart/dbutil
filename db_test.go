@@ -28,6 +28,7 @@ const (
 
 var (
 	testFile = "test.db"
+	testout  = ioutil.Discard
 )
 
 type testStruct struct {
