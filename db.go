@@ -154,17 +154,19 @@ func Columns(row *sql.Rows) ([]string, error) {
 
 // Streamer streams query results
 type Streamer struct {
-	db *sql.DB
+	db    *sql.DB
+	query string
+	args  []interface{}
 }
 
 // NewStreamer returns a Streamer
-func NewStreamer(db *sql.DB) *Streamer {
-	return &Streamer{db}
+func NewStreamer(db *sql.DB, query string, args ...interface{}) *Streamer {
+	return &Streamer{db: db, query: query, args: args}
 }
 
 // Stream streams the query results to function fn
-func (s *Streamer) Stream(fn RowFunc, query string, args ...interface{}) error {
-	return stream(s.db, fn, query, args...)
+func (s *Streamer) Stream(fn RowFunc) error {
+	return stream(s.db, fn, s.query, s.args...)
 }
 
 // stream streams the query results to function fn
@@ -200,7 +202,7 @@ func stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 }
 
 // CSV streams the query results as a comma separated file
-func (s *Streamer) CSV(w io.Writer, query string, args ...interface{}) error {
+func (s *Streamer) CSV(w io.Writer) error {
 	cw := csv.NewWriter(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
@@ -213,11 +215,11 @@ func (s *Streamer) CSV(w io.Writer, query string, args ...interface{}) error {
 		return err
 	}
 	defer cw.Flush()
-	return s.Stream(fn, query, args...)
+	return s.Stream(fn)
 }
 
 // Tab streams the query results as a tab separated file
-func (s *Streamer) Tab(w io.Writer, query string, args ...interface{}) error {
+func (s *Streamer) Tab(w io.Writer) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
@@ -228,11 +230,11 @@ func (s *Streamer) Tab(w io.Writer, query string, args ...interface{}) error {
 		}
 		return err
 	}
-	return s.Stream(fn, query, args...)
+	return s.Stream(fn)
 }
 
 // JSON streams the query results as an array of JSON objects to the writer
-func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
+func (s *Streamer) JSON(w io.Writer) error {
 	enc := json.NewEncoder(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count > 0 {
@@ -246,7 +248,7 @@ func (s *Streamer) JSON(w io.Writer, query string, args ...interface{}) error {
 	}
 	fmt.Fprintln(w, "[")
 	defer fmt.Fprintln(w, "\n]")
-	return s.Stream(fn, query, args...)
+	return s.Stream(fn)
 }
 
 // RowMap returns the results of a query as a map

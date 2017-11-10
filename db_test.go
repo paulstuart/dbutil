@@ -62,7 +62,7 @@ func TestStream(t *testing.T) {
 		}
 		return nil
 	}
-	if err := NewStreamer(db).Stream(myStream, querySelect); err != nil {
+	if err := NewStreamer(db, querySelect).Stream(myStream); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -76,7 +76,7 @@ func TestStreamBadQuery(t *testing.T) {
 		}
 		return nil
 	}
-	if err := NewStreamer(db).Stream(myStream, queryBad); err == nil {
+	if err := NewStreamer(db, queryBad).Stream(myStream); err == nil {
 		t.Fatal("expected query error")
 	}
 }
@@ -87,7 +87,7 @@ func TestStreamBadFunc(t *testing.T) {
 	myStream := func(columns []string, count int, buffer []interface{}) error {
 		return fmt.Errorf("bad func, no biscuit")
 	}
-	if err := NewStreamer(db).Stream(myStream, querySelect); err == nil {
+	if err := NewStreamer(db, querySelect).Stream(myStream); err == nil {
 		t.Fatal("expected query error")
 	}
 }
@@ -96,7 +96,7 @@ func TestStreamCSV(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	if err := NewStreamer(db).CSV(ioutil.Discard, querySelect); err != nil {
+	if err := NewStreamer(db, querySelect).CSV(ioutil.Discard); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,7 +105,7 @@ func TestStreamTab(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	if err := NewStreamer(db).Tab(ioutil.Discard, querySelect); err != nil {
+	if err := NewStreamer(db, querySelect).Tab(ioutil.Discard); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -114,7 +114,7 @@ func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	err := NewStreamer(db).JSON(ioutil.Discard, querySelect)
+	err := NewStreamer(db, querySelect).JSON(ioutil.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func BenchmarkStreamJSON(b *testing.B) {
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		if err := NewStreamer(db).JSON(testout, querySingle); err != nil {
+		if err := NewStreamer(db, querySingle).JSON(testout); err != nil {
 			b.Error(err)
 		}
 	}

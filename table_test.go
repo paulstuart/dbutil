@@ -22,7 +22,7 @@ func TestTabular(t *testing.T) {
 	query := `select * from structs`
 
 	tw, table := Tabular(testout, true)
-	if err := NewStreamer(db).Stream(table, query); err != nil {
+	if err := NewStreamer(db, query).Stream(table); err != nil {
 		t.Fatal(err)
 	}
 	tw.Flush()
@@ -37,7 +37,7 @@ func TestTabularWriter(t *testing.T) {
 	query := `select * from structs`
 
 	tw, table := Tabular(nil, true)
-	if err := NewStreamer(db).Stream(table, query); err != nil {
+	if err := NewStreamer(db, query).Stream(table); err != nil {
 		t.Fatal(err)
 	}
 	tw.Flush()

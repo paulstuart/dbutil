@@ -80,7 +80,7 @@ func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 // PrintTable prints a tabular format to the writer
 func PrintTable(db *sql.DB, w io.Writer, header bool, query string, args ...interface{}) error {
 	tw, table := Tabular(w, true)
-	if err := NewStreamer(db).Stream(table, query, args...); err != nil {
+	if err := NewStreamer(db, query, args...).Stream(table); err != nil {
 		return err
 	}
 	tw.Flush()
