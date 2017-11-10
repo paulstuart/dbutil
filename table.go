@@ -8,6 +8,34 @@ import (
 	"text/tabwriter"
 )
 
+const (
+	// Flags copied from tabwriter as a convenience
+
+	// FilterHTML ignores html tags and treat entities (starting with '&'
+	// and ending in ';') as single characters (width = 1).
+	FilterHTML = tabwriter.FilterHTML
+
+	// StripEscape strips escape characters bracketing escaped text segments
+	// instead of passing them through unchanged with the text.
+	StripEscape = tabwriter.StripEscape
+
+	// AlignRight forces right-alignment of cell content.
+	// Default is left-alignment.
+	AlignRight = tabwriter.AlignRight
+
+	// DiscardEmptyColumns handles empty columns as if they were not present in
+	// the input in the first place.
+	DiscardEmptyColumns = tabwriter.DiscardEmptyColumns
+
+	// TabIndent always use tabs for indentation columns (i.e., padding of
+	// leading empty cells on the left) independent of padchar.
+	TabIndent = tabwriter.TabIndent
+
+	// Debug prints a vertical bar ('|') between columns (after formatting).
+	// Discarded columns appear as zero-width columns ("||").
+	Debug = tabwriter.Debug
+)
+
 var (
 	repl = strings.NewReplacer(
 		"\n", "\\\\n",
@@ -36,15 +64,31 @@ func underlines(cols []interface{}) []interface{} {
 	return u
 }
 
+// TableConfig contains tabwriter configuration settings
+type TableConfig struct {
+	Minwidth, Tabwidth, Padding int
+	Padchar                     byte
+	Flags                       uint
+}
+
+// DefaultConfig returns a TableConfig struct with reasonable defaults
+func DefaultConfig() *TableConfig {
+	return &TableConfig{0, 8, 1, ' ', 0}
+}
+
 // Tabular returns a Writer and a RowFunc for using with Stream()
-func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
+func Tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
 	if nil == w {
 		w = testout
 	}
 
+	if config == nil {
+		config = DefaultConfig()
+	}
+
 	// tabwriter.NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer
 	// Format in tab-separated columns with a tab stop of 8.
-	tw := tabwriter.NewWriter(w, 0, 8, 1, ' ', 0)
+	tw := tabwriter.NewWriter(w, config.Minwidth, config.Tabwidth, config.Padding, config.Padchar, config.Flags)
 
 	rower := func(values ...interface{}) {
 		tabs := len(values) - 1
@@ -78,11 +122,8 @@ func Tabular(w io.Writer, header bool) (*tabwriter.Writer, RowFunc) {
 }
 
 // PrintTable prints a tabular format to the writer
-func PrintTable(db *sql.DB, w io.Writer, header bool, query string, args ...interface{}) error {
-	tw, table := Tabular(w, true)
-	if err := NewStreamer(db, query, args...).Stream(table); err != nil {
-		return err
-	}
-	tw.Flush()
-	return nil
+func PrintTable(db *sql.DB, w io.Writer, header bool, config *TableConfig, query string, args ...interface{}) error {
+	tw, table := Tabular(w, header, config)
+	defer tw.Flush()
+	return NewStreamer(db, query, args...).Stream(table)
 }

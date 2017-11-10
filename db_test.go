@@ -30,6 +30,24 @@ var (
 	testFile = "test.db"
 )
 
+type testStruct struct {
+	id       int
+	name     string
+	kind     int
+	data     []byte
+	modified time.Time
+}
+
+func (t *testStruct) Fields() []interface{} {
+	return []interface{}{
+		&(t.id),
+		&(t.name),
+		&(t.kind),
+		&(t.data),
+		&(t.modified),
+	}
+}
+
 func init() {
 	os.Remove(testFile)
 	if testing.Verbose() {
@@ -60,6 +78,7 @@ func TestStream(t *testing.T) {
 		} else if id == 0 {
 			t.Fatalf("expected row id > 0")
 		}
+		t.Log(buffer...)
 		return nil
 	}
 	if err := NewStreamer(db, querySelect).Stream(myStream); err != nil {
@@ -470,7 +489,6 @@ func TestRowMap(t *testing.T) {
 	for k, v := range row {
 		t.Logf("col:%s val:%v (%T)", k, v, v)
 	}
-
 }
 
 func TestRowMapBadQuery(t *testing.T) {
