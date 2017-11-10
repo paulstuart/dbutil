@@ -1,7 +1,6 @@
 package dbutil
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"strings"
@@ -76,8 +75,7 @@ func DefaultConfig() *TableConfig {
 	return &TableConfig{0, 8, 1, ' ', 0}
 }
 
-// Tabular returns a Writer and a RowFunc for using with Stream()
-func Tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
+func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
 	if nil == w {
 		w = testout
 	}
@@ -122,8 +120,8 @@ func Tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, 
 }
 
 // PrintTable prints a tabular format to the writer
-func PrintTable(db *sql.DB, w io.Writer, header bool, config *TableConfig, query string, args ...interface{}) error {
-	tw, table := Tabular(w, header, config)
+func (s *Streamer) Table(w io.Writer, header bool, config *TableConfig) error {
+	tw, table := tabular(w, header, config)
 	defer tw.Flush()
-	return NewStreamer(db, query, args...).Stream(table)
+	return s.Stream(table)
 }

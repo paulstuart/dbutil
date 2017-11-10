@@ -120,11 +120,11 @@ func TestStreamCSV(t *testing.T) {
 	}
 }
 
-func TestStreamTab(t *testing.T) {
+func TestStreamTSV(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	if err := NewStreamer(db, querySelect).Tab(ioutil.Discard); err != nil {
+	if err := NewStreamer(db, querySelect).TSV(ioutil.Discard); err != nil {
 		t.Fatal(err)
 	}
 }

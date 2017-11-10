@@ -218,8 +218,8 @@ func (s *Streamer) CSV(w io.Writer) error {
 	return s.Stream(fn)
 }
 
-// Tab streams the query results as a tab separated file
-func (s *Streamer) Tab(w io.Writer) error {
+// TSV streams the query results as a tab separated file
+func (s *Streamer) TSV(w io.Writer) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 0 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
