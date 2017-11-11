@@ -163,12 +163,23 @@ func prepare(db *sql.DB) {
 	}
 }
 
-func BenchmarkQueryAdHoc(b *testing.B) {
-	db, err := open(testFile)
+func benchDb(b *testing.B) *sql.DB {
+	//db, err := open(":memory:")
+	db, err := open("bench.db")
 	if err != nil {
 		b.Fatal(err)
 	}
+	if _, err := db.Exec(queryCreate); err != nil {
+		b.Fatal(err)
+	}
 	prepare(db)
+	return db
+}
+
+func BenchmarkQueryAdHoc(b *testing.B) {
+	db := benchDb(b)
+	defer db.Close()
+
 	query := "select id,name,kind,modified from structs where id > 0"
 
 	if _, err := db.Query(query); err != nil {
@@ -194,11 +205,9 @@ func BenchmarkQueryAdHoc(b *testing.B) {
 }
 
 func BenchmarkQueryAdHocOut(b *testing.B) {
-	db, err := open(testFile)
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(db)
+	db := benchDb(b)
+	defer db.Close()
+
 	w := ioutil.Discard
 	delimiter := "\t"
 	query := "select id,name,kind,modified from structs where id > 0"
@@ -243,11 +252,9 @@ func BenchmarkQueryAdHocOut(b *testing.B) {
 }
 
 func BenchmarkQueryPrepared(b *testing.B) {
-	db, err := open(testFile)
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(db)
+	db := benchDb(b)
+	defer db.Close()
+
 	query := "select id,name,kind,modified from structs where id > ?"
 
 	tx, err := db.Begin()
@@ -281,30 +288,14 @@ func BenchmarkQueryPrepared(b *testing.B) {
 }
 
 func nullStream(columns []string, count int, buffer []interface{}) error {
-	/*
-		f := ioutil.Discard
-		tabs := len(buffer) - 1
-		for i, item := range buffer {
-			fmt.Fprint(f, item)
-			if i < tabs {
-				fmt.Fprint(f, "\t")
-			}
-		}
-		fmt.Fprint(f, "\n")
-	*/
 	return nil
 }
 
 func BenchmarkStream(b *testing.B) {
-	dbs, err := open("stest.db")
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(dbs)
-
+	db := benchDb(b)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		if err := stream(dbs, nullStream, querySingle); err != nil {
+		if err := stream(db, nullStream, querySingle); err != nil {
 			b.Error(err)
 		}
 	}
@@ -326,15 +317,12 @@ func BenchmarkStreamToFile(b *testing.B) {
 		fmt.Fprint(f, "\n")
 		return nil
 	}
-	dbs, err := open("stest.db")
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(dbs)
+	db := benchDb(b)
+	defer db.Close()
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		if err := stream(dbs, fStream, querySingle); err != nil {
+		if err := stream(db, fStream, querySingle); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -342,12 +330,8 @@ func BenchmarkStreamToFile(b *testing.B) {
 }
 
 func BenchmarkStreamJSON(b *testing.B) {
-	db, err := open("stest.db")
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(db)
-
+	db := benchDb(b)
+	defer db.Close()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		if err := NewStreamer(db, querySingle).JSON(testout); err != nil {
@@ -357,11 +341,9 @@ func BenchmarkStreamJSON(b *testing.B) {
 }
 
 func BenchmarkInsertSingle(b *testing.B) {
-	db, err := open("file::memory:?cache=shared")
-	if err != nil {
-		b.Fatal(err)
-	}
-	prepare(db)
+	db := benchDb(b)
+	defer db.Close()
+
 	query := "insert into structs (name,kind) values('ziggy',1984)"
 
 	b.ResetTimer()
@@ -377,31 +359,27 @@ func BenchmarkInsertSingle(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionNoArgs(b *testing.B) {
-	db, err := open("file::memory:?cache=shared")
-	if err != nil {
-		b.Fatal(err)
-	}
+	db := benchDb(b)
 	defer db.Close()
 
-	prepare(db)
 	query := "insert into structs (name,kind) values('ziggy',1984)"
 	b.ResetTimer()
-	tx, err := db.Begin()
-	if err != nil {
-		b.Fatal(err)
-	}
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		tx.Rollback()
-		b.Fatal(err)
-	}
 	for i := 0; i < b.N; i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			b.Fatal(err)
+		}
+		stmt, err := tx.Prepare(query)
+		if err != nil {
+			tx.Rollback()
+			b.Fatal(err)
+		}
 		if _, err := stmt.Exec(); err != nil {
 			b.Fatal(err)
 		}
+		tx.Commit()
+		stmt.Close()
 	}
-	tx.Commit()
-	stmt.Close()
 	b.StopTimer()
 	if err := db.Close(); err != nil {
 		b.Fatal(err)
@@ -409,31 +387,27 @@ func BenchmarkInsertTransactionNoArgs(b *testing.B) {
 }
 
 func BenchmarkInsertTransactionWithArgs(b *testing.B) {
-	db, err := open("file::memory:?cache=shared")
-	if err != nil {
-		b.Fatal(err)
-	}
+	db := benchDb(b)
 	defer db.Close()
 
-	prepare(db)
 	query := "insert into structs (name,kind) values(?,?)"
 	b.ResetTimer()
-	tx, err := db.Begin()
-	if err != nil {
-		b.Fatal(err)
-	}
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		tx.Rollback()
-		b.Fatal(err)
-	}
-	defer stmt.Close()
 	for i := 0; i < b.N; i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			b.Fatal(err)
+		}
+		stmt, err := tx.Prepare(query)
+		if err != nil {
+			tx.Rollback()
+			b.Fatal(err)
+		}
+		defer stmt.Close()
 		if _, err := stmt.Exec("ziggy", 1984); err != nil {
 			b.Fatal(err)
 		}
+		tx.Commit()
 	}
-	tx.Commit()
 	b.StopTimer()
 	if err := db.Close(); err != nil {
 		b.Fatal(err)

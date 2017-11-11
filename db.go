@@ -129,12 +129,12 @@ func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, 
 	if 0 == len(query) {
 		return 0, 0, fmt.Errorf("empty query")
 	}
-	var i sql.Result
-	if i, err = db.Exec(query, args...); err != nil {
+	r, err := db.Exec(query, args...)
+	if err != nil {
 		return 0, 0, err
 	}
-	affected, _ = i.RowsAffected()
-	last, _ = i.LastInsertId()
+	affected, _ = r.RowsAffected()
+	last, _ = r.LastInsertId()
 	return affected, last, nil
 }
 
