@@ -35,34 +35,6 @@ const (
 	Debug = tabwriter.Debug
 )
 
-var (
-	repl = strings.NewReplacer(
-		"\n", "\\\\n",
-		"\t", "\\\\t",
-		"\r", "\\\\r",
-		`"`, `\"`,
-		"_", " ",
-		"-", " ",
-	)
-)
-
-func strlen(v interface{}) int {
-	switch v := v.(type) {
-	case string:
-		return len(v)
-	default:
-		return 0
-	}
-}
-
-func underlines(cols []interface{}) []interface{} {
-	u := make([]interface{}, len(cols))
-	for i, c := range cols {
-		u[i] = strings.Repeat("=", strlen(c))
-	}
-	return u
-}
-
 // TableConfig contains tabwriter configuration settings
 type TableConfig struct {
 	Minwidth int  // Minimum column width
@@ -72,45 +44,37 @@ type TableConfig struct {
 	Flags    uint // Flags are noted above
 }
 
-// defaultConfig returns a TableConfig struct with reasonable defaults
-func defaultConfig() *TableConfig {
-	// minwidth, tabwidth, padding, padchar, flags
-	return &TableConfig{0, 8, 1, ' ', 0}
-}
-
 func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
 	if config == nil {
-		config = defaultConfig()
+		//        minwidth, tabwidth, padding, padchar, flags
+		config = &TableConfig{0, 8, 1, ' ', 0}
 	}
 
 	// Format in tab-separated columns with a tab stop of 8.
 	tw := tabwriter.NewWriter(w, config.Minwidth, config.Tabwidth, config.Padding, config.Padchar, config.Flags)
 
 	rower := func(values ...interface{}) {
-		tabs := len(values) - 1
 		for i, v := range values {
+			if i > 0 {
+				fmt.Fprint(tw, "\t")
+			}
 			switch v := v.(type) {
 			case []uint8:
 				fmt.Fprint(tw, string(v))
 			default:
 				fmt.Fprint(tw, v)
 			}
-			if i < tabs {
-				fmt.Fprint(tw, "\t")
-			} else {
-				fmt.Fprint(tw, "\n")
-			}
 		}
+		fmt.Fprint(tw, "\n")
 	}
 
 	return tw, func(columns []string, row int, values []interface{}) error {
 		if header && row == 1 {
-			head := make([]interface{}, len(columns))
+			fmt.Fprintln(tw, strings.Join(columns, "\t"))
 			for i, col := range columns {
-				head[i] = repl.Replace(col)
+				columns[i] = strings.Repeat("=", len(col))
 			}
-			rower(head...)
-			rower(underlines(head)...)
+			fmt.Fprintln(tw, strings.Join(columns, "\t"))
 		}
 		rower(values...)
 		return nil

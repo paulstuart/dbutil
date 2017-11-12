@@ -480,7 +480,6 @@ func TestRowMap(t *testing.T) {
 func TestRowMapBadQuery(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	// select id,name,kind,data,modified from structs
 	_, err := RowMap(db, queryBad)
 	if err == nil {
 		t.Fatal("expected query error")
@@ -490,10 +489,8 @@ func TestRowMapBadQuery(t *testing.T) {
 func TestRowMapEmpty(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
-	args := []interface{}{"this does not exist", 666}
-	if _, err := RowMap(db, query, args...); err == nil {
+	if _, err := RowMap(db, query, "this does not exist", 666); err == nil {
 		t.Fatal("error was expected")
 	} else {
 		t.Logf("got expected error: %v", err)
@@ -503,10 +500,8 @@ func TestRowMapEmpty(t *testing.T) {
 func TestRowStrings(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
-	// select id,name,kind,data,modified from structs
 	query := "select * from structs where name=? and kind=?"
-	args := []interface{}{"abc", 23}
-	row, err := RowStrings(db, query, args...)
+	row, err := RowStrings(db, query, "abc", 23)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,6 +611,19 @@ func TestExecBadQuery(t *testing.T) {
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	db := structDb(t)
+	defer db.Close()
+	query := "update structs set name=? where kind > ?"
+	cnt, err := Update(db, query, "bigger", 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 2 {
+		t.Errorf("expected count to be 2 but got: %d", cnt)
+	}
+}
+
 func TestInsert(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
@@ -630,26 +638,6 @@ func TestInsert(t *testing.T) {
 	}
 }
 
-/*
-func TestGenerator(t *testing.T) {
-	db := structDb(t)
-
-	query := "select * from structs"
-	iter := Generator(db, query)
-	record, ok := iter()
-	if !ok {
-		t.Fatal("no record found")
-	}
-	if len(record) == 0 {
-		t.Fatal("empty record")
-	}
-	id := record[0].(int64)
-	if id < 1 {
-		t.Fatalf("invalid id: %d\n", id)
-	}
-}
-*/
-
 func TestInsertMany(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
@@ -660,24 +648,19 @@ func TestInsertMany(t *testing.T) {
 		{"many1", kind, "pie-hole"},
 		{"many2", kind, "pie-hole"},
 		{"many3", kind, "pie-hole"},
-		{"many4", kind, "pie-hole"},
 	}
 	if err := InsertMany(db, query, args...); err != nil {
 		t.Fatal(err)
 	}
 
-	/*
-		FIX THIS
-		query2 := "select count(*) as count from structs where kind=?"
-		args2 := []interface{}{kind}
-		var count int
-		if err := Row(db, query2, args2, &count); err != nil {
-			t.Fatal(err)
-		}
-		if count != len(args) {
-			t.Errorf("expected %d rows but got %d rows instead\n", len(args), count)
-		}
-	*/
+	query2 := "select count(*) as cnt from structs where kind=?"
+	var count int
+	if err := Row(db, []interface{}{&count}, query2, kind); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(args) {
+		t.Errorf("expected %d rows but got %d rows instead\n", len(args), count)
+	}
 }
 
 func TestInsertManyClosedDb(t *testing.T) {
@@ -795,9 +778,51 @@ func TestInserter(t *testing.T) {
 	if err := insert.Close(); err != nil {
 		t.Fatal(err)
 	}
-	out := ioutil.Discard
-	if testing.Verbose() {
-		out = os.Stdout
+	var cnt int
+	dest := []interface{}{&cnt}
+	if err := Row(db, dest, "select count(*) as cnt from structs"); err != nil {
+		t.Fatal(err)
 	}
-	NewStreamer(db, "select * from structs").Table(out, true, nil)
+	if cnt != 4 {
+		t.Errorf("expected count to be 4 but got: %d", cnt)
+	}
+}
+
+func TestInserterClosed(t *testing.T) {
+	db := emptyTable(t)
+	db.Close()
+	const q1 = "insert into structs(name, kind, data) values(?,?,?)"
+	_, err := NewInserter(db, q1)
+	if err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
+	}
+}
+
+func TestInserterBadQuery(t *testing.T) {
+	db := emptyTable(t)
+	defer db.Close()
+	const q1 = "insert into tabledoesnotexist(name, kind, data) values(?,?,?)"
+	_, err := NewInserter(db, q1)
+	if err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
+	}
+}
+
+func TestInserterMissingArgs(t *testing.T) {
+	db := emptyTable(t)
+	defer db.Close()
+	const q1 = "insert into structs(name, kind, data) values(?,?,?)"
+	insert, err := NewInserter(db, q1)
+	if err != nil {
+		t.Fatal("unexpected error:", err)
+	}
+	if err := insert.Insert("myname", 99); err == nil {
+		t.Fatal("expected error but got none")
+	} else {
+		t.Log("got expected error:", err)
+	}
 }

@@ -91,13 +91,13 @@ func RowStrings(db *sql.DB, query string, args ...interface{}) ([]string, error)
 
 // Update runs an update query and returns the count of records updated, if any
 func Update(db *sql.DB, query string, args ...interface{}) (int64, error) {
-	_, mods, err := Exec(db, query, args...)
+	mods, _, err := Exec(db, query, args...)
 	return mods, err
 }
 
 // Insert runs an insert query and returns the id of the last records inserted
 func Insert(db *sql.DB, query string, args ...interface{}) (int64, error) {
-	last, _, err := Exec(db, query, args...)
+	_, last, err := Exec(db, query, args...)
 	return last, err
 }
 
@@ -204,7 +204,7 @@ func stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 func (s *Streamer) CSV(w io.Writer) error {
 	cw := csv.NewWriter(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
-		if count == 0 {
+		if count == 1 {
 			cw.Write(columns)
 		}
 		s, err := toString(buffer)
@@ -220,7 +220,7 @@ func (s *Streamer) CSV(w io.Writer) error {
 // TSV streams the query results as a tab separated file
 func (s *Streamer) TSV(w io.Writer) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
-		if count == 0 {
+		if count == 1 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
 		s, err := toString(buffer)
@@ -236,7 +236,7 @@ func (s *Streamer) TSV(w io.Writer) error {
 func (s *Streamer) JSON(w io.Writer) error {
 	enc := json.NewEncoder(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
-		if count > 0 {
+		if count > 1 {
 			fmt.Fprintln(w, ",")
 		}
 		obj := make(map[string]interface{})
