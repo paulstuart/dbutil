@@ -6,43 +6,29 @@ package dbutil
 import (
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// RowFunc is a function called for each row by Stream (columns, row number, values)
-// Row numbering starts at 1
-type RowFunc func([]string, int, []interface{}) error
-
 func toString(in []interface{}) ([]string, error) {
-	out := make([]string, 0, len(in))
-	for _, col := range in {
-		var s string
+	out := make([]string, len(in))
+	for i, col := range in {
 		switch v := col.(type) {
 		case nil:
-			s = ""
+			out[i] = ""
 		case string:
-			s = v
-		case []uint8:
-			s = string(v)
-		case int32:
-			s = strconv.Itoa(int(v))
-		case int64:
-			s = strconv.FormatInt(v, 10)
-		case float64:
-			s = fmt.Sprintf("%v", v)
-		case time.Time:
-			s = v.String()
+			out[i] = v
 		case sql.RawBytes:
-			s = string(v)
+			out[i] = string(v)
+		case []uint8:
+			out[i] = string(v)
+		case int, int32, int64, float32, float64, time.Time:
+			out[i] = fmt.Sprint(v)
 		default:
 			return nil, fmt.Errorf("unhandled type: %T", col)
 		}
-		out = append(out, s)
 	}
 	return out, nil
 }
@@ -151,7 +137,12 @@ func Columns(row *sql.Rows) ([]string, error) {
 	return columns, nil
 }
 
-// Streamer streams query results
+// StreamFunc is a function called for each row by Stream (columns, row number, values).
+//
+// Row numbering starts at 1.
+type StreamFunc func([]string, int, []interface{}) error
+
+// Streamer streams rows from query results to be formatted or processed
 type Streamer struct {
 	db    *sql.DB
 	query string
@@ -163,13 +154,13 @@ func NewStreamer(db *sql.DB, query string, args ...interface{}) *Streamer {
 	return &Streamer{db: db, query: query, args: args}
 }
 
-// Stream streams the query results to function fn
-func (s *Streamer) Stream(fn RowFunc) error {
+// Stream sends each row the query results to a StreamFunc
+func (s *Streamer) Stream(fn StreamFunc) error {
 	return stream(s.db, fn, s.query, s.args...)
 }
 
 // stream streams the query results to function fn
-func stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
+func stream(db *sql.DB, fn StreamFunc, query string, args ...interface{}) error {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
@@ -201,10 +192,10 @@ func stream(db *sql.DB, fn RowFunc, query string, args ...interface{}) error {
 }
 
 // CSV streams the query results as a comma separated file
-func (s *Streamer) CSV(w io.Writer) error {
+func (s *Streamer) CSV(w io.Writer, header bool) error {
 	cw := csv.NewWriter(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
-		if count == 1 {
+		if header && count == 1 {
 			cw.Write(columns)
 		}
 		s, err := toString(buffer)
@@ -217,7 +208,7 @@ func (s *Streamer) CSV(w io.Writer) error {
 	return s.Stream(fn)
 }
 
-// TSV streams the query results as a tab separated file
+// TSV streams the query results as a tab separated values
 func (s *Streamer) TSV(w io.Writer) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count == 1 {
@@ -234,18 +225,29 @@ func (s *Streamer) TSV(w io.Writer) error {
 
 // JSON streams the query results as an array of JSON objects to the writer
 func (s *Streamer) JSON(w io.Writer) error {
-	enc := json.NewEncoder(w)
 	fn := func(columns []string, count int, buffer []interface{}) error {
 		if count > 1 {
-			fmt.Fprintln(w, ",")
+			fmt.Fprint(w, ",")
 		}
-		obj := make(map[string]interface{})
-		for i, c := range columns {
-			obj[c] = buffer[i]
+		fmt.Fprint(w, "\n{")
+		for i, col := range columns {
+			if i > 0 {
+				fmt.Fprint(w, ", ")
+			}
+			fmt.Fprintf(w, `"%s": `, col)
+			switch v := buffer[i].(type) {
+			case bool, int, int32, int64, float32, float64:
+				fmt.Fprint(w, v)
+			case []byte:
+				fmt.Fprintf(w, `"%v"`, string(v))
+			default:
+				fmt.Fprintf(w, `"%v"`, v)
+			}
 		}
-		return enc.Encode(obj)
+		fmt.Fprint(w, "}")
+		return nil
 	}
-	fmt.Fprintln(w, "[")
+	fmt.Fprint(w, "[")
 	defer fmt.Fprintln(w, "\n]")
 	return s.Stream(fn)
 }

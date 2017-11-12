@@ -44,7 +44,7 @@ type TableConfig struct {
 	Flags    uint // Flags are noted above
 }
 
-func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, RowFunc) {
+func tabular(w io.Writer, header bool, config *TableConfig) (*tabwriter.Writer, StreamFunc) {
 	if config == nil {
 		//        minwidth, tabwidth, padding, padchar, flags
 		config = &TableConfig{0, 8, 1, ' ', 0}

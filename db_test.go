@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	querySelect = "select id,name,kind,modified from structs"
+	querySelect = "select id,name,kind,data,modified from structs"
 	querySingle = "select id,name,kind,modified from structs limit 1"
 	queryBad    = "c e n'est pas une sql query"
 	queryCreate = `create table if not exists structs (
@@ -34,7 +34,7 @@ var (
 		{"abc", 23, "what ev er"},
 		{"def", 69, "m'kay"},
 		{"hij", 42, "meaning of life"},
-		{"klm", 2, "of a kind"},
+		{"klm", 2, "of a kind, to a point"},
 	}
 )
 
@@ -59,7 +59,6 @@ func (t *testStruct) Fields() []interface{} {
 func init() {
 	os.Remove(testFile)
 	if testing.Verbose() {
-		fmt.Println("VERBOSE!")
 		testout = os.Stdout
 	}
 	sql.Register(testDriver, &sqlite3.SQLiteDriver{})
@@ -87,8 +86,8 @@ func TestStream(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 	myStream := func(columns []string, count int, buffer []interface{}) error {
-		if len(columns) != 4 {
-			t.Fatal("no columns")
+		if len(columns) != 5 {
+			t.Fatal("expected %d columns but got: %d", 5, len(columns))
 		}
 		if id, ok := buffer[0].(int64); !ok {
 			t.Fatalf("expected numeric id: %v", buffer[0])
@@ -132,7 +131,10 @@ func TestStreamCSV(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	if err := NewStreamer(db, querySelect).CSV(ioutil.Discard); err != nil {
+	if testing.Verbose() {
+		testout = os.Stdout
+	}
+	if err := NewStreamer(db, querySelect).CSV(testout, true); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,7 +152,11 @@ func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	err := NewStreamer(db, querySelect).JSON(ioutil.Discard)
+	out := ioutil.Discard
+	if testing.Verbose() {
+		out = os.Stdout
+	}
+	err := NewStreamer(db, querySelect).JSON(out)
 	if err != nil {
 		t.Fatal(err)
 	}
