@@ -9,28 +9,29 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
-func toString(in []interface{}) ([]string, error) {
+func strVal(in interface{}) string {
+	switch v := in.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case sql.RawBytes:
+		return string(v)
+	case []uint8:
+		return string(v)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func toString(in []interface{}) []string {
 	out := make([]string, len(in))
 	for i, col := range in {
-		switch v := col.(type) {
-		case nil:
-			out[i] = ""
-		case string:
-			out[i] = v
-		case sql.RawBytes:
-			out[i] = string(v)
-		case []uint8:
-			out[i] = string(v)
-		case int, int32, int64, float32, float64, time.Time:
-			out[i] = fmt.Sprint(v)
-		default:
-			return nil, fmt.Errorf("unhandled type: %T", col)
-		}
+		out[i] = strVal(col)
 	}
-	return out, nil
+	return out
 }
 
 // Row returns one row of the results of a query
@@ -198,27 +199,26 @@ func (s *Streamer) CSV(w io.Writer, header bool) error {
 		if header && count == 1 {
 			cw.Write(columns)
 		}
-		s, err := toString(buffer)
-		if err == nil {
-			cw.Write(s)
-		}
-		return err
+		return cw.Write(toString(buffer))
 	}
 	defer cw.Flush()
 	return s.Stream(fn)
 }
 
 // TSV streams the query results as a tab separated values
-func (s *Streamer) TSV(w io.Writer) error {
+func (s *Streamer) TSV(w io.Writer, header bool) error {
 	fn := func(columns []string, count int, buffer []interface{}) error {
-		if count == 1 {
+		if header && count == 1 {
 			fmt.Fprintln(w, strings.Join(columns, "\t"))
 		}
-		s, err := toString(buffer)
-		if err == nil {
-			fmt.Fprintln(w, strings.Join(s, "\t"))
+		for i, col := range buffer {
+			if i > 0 {
+				fmt.Fprint(w, "\t")
+			}
+			fmt.Fprint(w, strVal(col))
 		}
-		return err
+		fmt.Fprintln(w)
+		return nil
 	}
 	return s.Stream(fn)
 }

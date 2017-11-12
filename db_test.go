@@ -87,7 +87,7 @@ func TestStream(t *testing.T) {
 	defer db.Close()
 	myStream := func(columns []string, count int, buffer []interface{}) error {
 		if len(columns) != 5 {
-			t.Fatal("expected %d columns but got: %d", 5, len(columns))
+			t.Fatalf("expected %d columns but got: %d", 5, len(columns))
 		}
 		if id, ok := buffer[0].(int64); !ok {
 			t.Fatalf("expected numeric id: %v", buffer[0])
@@ -143,7 +143,10 @@ func TestStreamTSV(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	if err := NewStreamer(db, querySelect).TSV(ioutil.Discard); err != nil {
+	if testing.Verbose() {
+		testout = os.Stdout
+	}
+	if err := NewStreamer(db, querySelect).TSV(testout, true); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -152,12 +155,10 @@ func TestStreamJSON(t *testing.T) {
 	db := structDb(t)
 	defer db.Close()
 
-	out := ioutil.Discard
 	if testing.Verbose() {
-		out = os.Stdout
+		testout = os.Stdout
 	}
-	err := NewStreamer(db, querySelect).JSON(out)
-	if err != nil {
+	if err := NewStreamer(db, querySelect).JSON(testout); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -341,6 +342,28 @@ func BenchmarkStreamJSON(b *testing.B) {
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		if err := NewStreamer(db, querySingle).JSON(testout); err != nil {
+			b.Error(err)
+		}
+	}
+}
+
+func BenchmarkStreamCSV(b *testing.B) {
+	db := benchDb(b)
+	defer db.Close()
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		if err := NewStreamer(db, querySingle).CSV(testout, true); err != nil {
+			b.Error(err)
+		}
+	}
+}
+
+func BenchmarkStreamTSV(b *testing.B) {
+	db := benchDb(b)
+	defer db.Close()
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		if err := NewStreamer(db, querySingle).TSV(testout, true); err != nil {
 			b.Error(err)
 		}
 	}
@@ -552,28 +575,9 @@ func TestToString(t *testing.T) {
 		raw,
 		3.1415926,
 	}
-	text, err := toString(src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	text := toString(src)
 	if text[2] != u8 {
 		t.Errorf("expected: %s got: %s\n", u8, text[2])
-	}
-}
-
-type unknownStruct struct{}
-
-func TestToStringUnknownType(t *testing.T) {
-	const u8 = "8 uints"
-	unknown := unknownStruct{}
-	src := []interface{}{
-		nil,
-		"a string",
-		unknown,
-	}
-	_, err := toString(src)
-	if err == nil {
-		t.Fatal("expected error but got none")
 	}
 }
 
