@@ -236,6 +236,8 @@ func (s *Streamer) JSON(w io.Writer) error {
 			}
 			fmt.Fprintf(w, `"%s": `, col)
 			switch v := buffer[i].(type) {
+			case nil:
+				fmt.Fprint(w, "null")
 			case bool, int, int32, int64, float32, float64:
 				fmt.Fprint(w, v)
 			case []byte:
