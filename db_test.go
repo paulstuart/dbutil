@@ -480,7 +480,7 @@ func TestRowMap(t *testing.T) {
 	if !ok {
 		t.Fatal("missing data field")
 	}
-	if string(data.([]uint8)) != "what ev er" {
+	if string(data.(string)) != "what ev er" {
 		t.Errorf("ROW: %+v\n", row)
 	}
 	for k, v := range row {
