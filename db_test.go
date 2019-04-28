@@ -38,24 +38,6 @@ var (
 	}
 )
 
-type testStruct struct {
-	id       int
-	name     string
-	kind     int
-	data     []byte
-	modified time.Time
-}
-
-func (t *testStruct) Fields() []interface{} {
-	return []interface{}{
-		&(t.id),
-		&(t.name),
-		&(t.kind),
-		&(t.data),
-		&(t.modified),
-	}
-}
-
 func init() {
 	os.Remove(testFile)
 	if testing.Verbose() {

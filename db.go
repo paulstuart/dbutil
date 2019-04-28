@@ -113,7 +113,7 @@ func InsertMany(db *sql.DB, query string, args ...[]interface{}) error {
 // Exec executes a query and returns the effected records info
 func Exec(db *sql.DB, query string, args ...interface{}) (affected, last int64, err error) {
 	query = strings.TrimSpace(query)
-	if 0 == len(query) {
+	if query == "" {
 		return 0, 0, fmt.Errorf("empty query")
 	}
 	r, err := db.Exec(query, args...)
